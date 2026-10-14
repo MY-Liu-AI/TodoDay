@@ -1,0 +1,239 @@
+/* 待办事项 —— 一张清单，一本日历。
+ *
+ * 纸质手账的视觉语言：暖白、一条竖线当日轴、勾掉的事划一道，不删。左边那本
+ * 月历不是装饰 —— 「这周到底堆了多少事」是一张列表回答不了的问题，一眼扫过
+ * 日历却能。
+ */
+:root{
+  --bg:#f2f1ec; --panel:#fbfaf7; --raised:#f3f2ed; --ink:#15150f;
+  --muted:#69675c; --faint:#a4a196; --line:#e5e3da; --line-soft:#efeee7;
+  --accent:#1f5c46; --accent-ink:#ffffff; --accent-soft:#e3ede9;
+  --pos:#1f5c46; --neg:#b3402c; --warn:#a97516;
+  --p1:#b3402c; --p2:#a97516; --p3:#8d8a7f;
+  --h0:#e7e5db; --h1:#cfe0d6; --h2:#9cc4b0; --h3:#5b9a7e; --h4:#1f5c46;
+  --r:9px;
+}
+:root[data-theme=dark]{
+  --bg:#0f0f0d; --panel:#171714; --raised:#1e1e1a; --ink:#eceade;
+  --muted:#918e80; --faint:#615f55; --line:#2a2924; --line-soft:#20201c;
+  --accent:#65b394; --accent-ink:#0c1a15; --accent-soft:#16241f;
+  --p1:#d9705c; --p2:#d0a24a; --p3:#7c7a6f;
+  --h0:#232320; --h1:#1e3a30; --h2:#2d5c49; --h3:#448069; --h4:#65b394;
+}
+
+/* ── 月历 ──────────────────────────────────────────────────────────────────
+   每一格底下最多三颗点：逾期红、未完成绿、已完成灰。点数就是那天的负载，
+   不写数字是因为在手机上四十二格里的数字谁也不会去读。 */
+.cal{ padding:14px 14px 6px }
+.calhead{ display:flex; align-items:center; gap:6px; margin-bottom:9px }
+.calhead .m{ flex:1; font-size:14.5px; font-weight:560; font-variant-numeric:tabular-nums }
+ /* minmax(0,1fr) 不是装饰:1fr 的最小尺寸默认是 auto,格子里的内容一撑,七列
+    就挤不进容器,星期日那一列直接被裁在外面。 */
+.calgrid{ display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:2px }
+.calgrid .wd{ text-align:center; font-family:var(--mono); font-size:10px;
+              color:var(--faint); padding:3px 0 6px }
+.cell{
+  position:relative; aspect-ratio:1; min-height:34px;
+  /* 圆点脱离文档流钉在下沿固定 6px 处，日期数字在剩下的空间里居中。
+     跟着字排的话，行高一变（比如今天那格加粗）圆点就跟着往下掉。 */
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  padding-bottom:9px;
+  border:1px solid transparent; border-radius:7px; background:none; color:var(--muted);
+  font-family:var(--mono); font-size:12px; font-variant-numeric:tabular-nums;
+  cursor:pointer; transition:background var(--fast), color var(--fast);
+}
+.cell:hover{ background:var(--raised) }
+.cell.out{ opacity:.3 }
+.cell.today{ color:var(--accent); font-weight:700 }
+.cell.today::after{
+  content:''; position:absolute; inset:0; border-radius:7px;
+  border:1px solid var(--accent); opacity:.45;
+}
+.cell.on{ background:var(--accent); color:var(--accent-ink) }
+.cell.on::after{ opacity:0 }
+.cell .dots{ position:absolute; left:0; right:0; bottom:6px; height:4px;
+              display:flex; gap:2px; align-items:center; justify-content:center }
+.cell .dots i{ width:4px; height:4px; border-radius:50%; background:var(--accent) }
+.cell .dots i.late{ background:var(--neg) }
+.cell .dots i.did{ background:var(--line) }
+.cell.on .dots i{ background:var(--accent-ink); opacity:.8 }
+
+.daybar{
+  display:flex; align-items:center; gap:8px; padding:9px 16px;
+  border-bottom:1px solid var(--line-soft); font-size:12.5px; color:var(--muted);
+}
+.daybar b{ color:var(--ink); font-weight:560 }
+.miniib{ width:26px; height:26px; display:grid; place-items:center; flex:none;
+         border:1px solid transparent; border-radius:5px; background:none;
+         color:var(--faint); cursor:pointer }
+.miniib:hover{ color:var(--ink); background:var(--raised); border-color:var(--line) }
+.miniib svg{ width:14px; height:14px; fill:none; stroke:currentColor; stroke-width:1.9;
+             stroke-linecap:round; stroke-linejoin:round }
+
+/* 头：今天做完多少。一个环，一句话。 */
+/* 这块不能叫 .today：会和日历格子的 today 状态类撞名，两边互相压中。 */
+.daysum{ display:flex; align-items:center; gap:16px; padding:20px 18px 16px }
+.ring{ position:relative; width:66px; height:66px; flex:none }
+.ring svg{ transform:rotate(-90deg) }
+.ring circle{ fill:none; stroke-width:5 }
+.ring .bgc{ stroke:var(--line) }
+.ring .fg{ stroke:var(--accent); stroke-linecap:round;
+           transition:stroke-dashoffset .55s var(--ease) }
+.ring .pc{ position:absolute; inset:0; display:grid; place-items:center;
+           font-family:var(--mono); font-size:15px; font-weight:600;
+           font-variant-numeric:tabular-nums }
+.daysum .txt h1{ font-size:21px; font-weight:560; letter-spacing:-.02em }
+.daysum .txt p{ font-size:12.5px; color:var(--muted); margin-top:4px; line-height:1.6 }
+
+.filters{ display:flex; gap:7px; padding:0 16px 12px; overflow-x:auto }
+.filters::-webkit-scrollbar{ display:none }
+
+/* 一条竖线穿过整张清单 —— 手账的日轴。 */
+.list{ position:relative; padding-bottom:14px }
+.grouphead{
+  display:flex; align-items:center; gap:9px;
+  padding:16px 16px 7px;
+  font-size:10.5px; letter-spacing:.11em; text-transform:uppercase;
+  color:var(--faint); font-weight:500;
+}
+.grouphead .n{ font-family:var(--mono) }
+.grouphead::after{ content:''; flex:1; height:1px; background:var(--line-soft) }
+
+.item{
+  position:relative;
+  display:flex; align-items:flex-start; gap:12px;
+  padding:11px 16px 11px 16px;
+  border-bottom:1px solid var(--line-soft);
+  background:var(--panel);
+  touch-action:pan-y;
+  user-select:none;
+}
+.item.dragging{ opacity:.5; background:var(--raised) }
+.item.dropbefore{ box-shadow:inset 0 2px 0 var(--accent) }
+/* 优先级：左缘一道竖线。三档不用三种颜色去抢眼，只有最高的那档是红的。 */
+.item::before{
+  content:''; position:absolute; left:0; top:0; bottom:0; width:3px;
+  background:var(--pri, transparent);
+}
+.box{
+  /* 视觉上是 21px 的小方框,热区要按手指来。用一层透明的伪元素往外撑,而不是
+     真把方框做大 —— 21px 的勾选框旁边就是「点开这条」的整行,差几毫米点错的
+     是另一个动作。 */
+  position:relative;
+  flex:none; width:21px; height:21px; margin-top:1px;
+  border:1.6px solid var(--line); border-radius:6px;
+  background:none; cursor:pointer;
+  display:grid; place-items:center;
+  transition:all var(--fast);
+}
+.box:hover{ border-color:var(--accent) }
+.box svg{ width:13px; height:13px; stroke:var(--accent-ink); fill:none;
+          stroke-width:2.6; stroke-linecap:round; stroke-linejoin:round;
+          opacity:0; transform:scale(.5); transition:all .2s var(--ease) }
+.box::before{ content:''; position:absolute; inset:-9px; border-radius:10px }
+.item.done .box{ background:var(--accent); border-color:var(--accent) }
+.item.done .box svg{ opacity:1; transform:none }
+.body{ flex:1; min-width:0 }
+.txt{ font-size:15px; line-height:1.5; word-break:break-word }
+.item.done .txt{ color:var(--faint); text-decoration:line-through; text-decoration-thickness:1px }
+.meta{ display:flex; gap:9px; align-items:center; margin-top:4px; font-size:11px; color:var(--faint) }
+.meta .tag{ font-family:var(--mono); border:1px solid var(--line); border-radius:3px;
+            padding:0 5px; color:var(--faint); opacity:1 }
+.meta .due.soon{ color:var(--warn) }
+.meta .due.late{ color:var(--neg) }
+.handle{
+  flex:none; width:26px; align-self:stretch; cursor:grab;
+  display:grid; place-items:center; color:var(--line);
+  touch-action:none;
+}
+.handle:hover{ color:var(--faint) }
+.handle svg{ width:14px; height:14px; stroke:currentColor; stroke-width:1.6 }
+
+/* 录入条：贴在底部，拇指够得到，输入即建。 */
+.composer{ display:flex; gap:9px; align-items:center; width:100% }
+.composer input{
+  flex:1; font:inherit; font-size:15px; min-height:42px;
+  padding:9px 13px; color:var(--ink);
+  background:var(--raised); border:1px solid var(--line);
+  border-radius:99px; outline:none;
+  transition:border-color var(--fast), background var(--fast);
+}
+.composer input:focus{ border-color:var(--accent); background:var(--panel) }
+.addbtn{
+  flex:none; width:42px; height:42px; border-radius:50%;
+  background:var(--accent); color:var(--accent-ink);
+  border:0; cursor:pointer; display:grid; place-items:center;
+  transition:transform .14s var(--ease), filter var(--fast);
+}
+.addbtn:hover{ filter:brightness(1.1) }
+.addbtn:active{ transform:scale(.9) }
+.addbtn svg{ width:19px; height:19px; stroke:currentColor; fill:none; stroke-width:2.2; stroke-linecap:round }
+
+.prirow{ display:flex; gap:8px }
+.prirow .chip.on{ background:var(--accent-soft); border-color:var(--accent); color:var(--accent) }
+
+.stats{ display:grid; grid-template-columns:repeat(4,1fr); gap:1px; background:var(--line);
+        border-top:1px solid var(--line); border-bottom:1px solid var(--line) }
+.stats > div{ background:var(--panel); padding:12px 6px; text-align:center }
+.stats .n{ font-family:var(--mono); font-size:18px; font-weight:600 }
+.stats .l{ font-size:10px; color:var(--faint); margin-top:3px; letter-spacing:.06em }
+
+.weekbar{ display:flex; gap:4px; padding:14px 16px 4px; align-items:flex-end; height:88px }
+.weekbar .d{ flex:1; display:flex; flex-direction:column; align-items:center; gap:5px; justify-content:flex-end }
+.weekbar .b{ width:100%; background:var(--accent-soft); border-radius:3px 3px 0 0;
+             border-top:2px solid var(--accent); min-height:2px;
+             transition:height .5s var(--ease) }
+.weekbar .l{ font-size:10px; color:var(--faint); font-family:var(--mono) }
+
+
+/* ── 完成热力 ──────────────────────────────────────────────────────────────
+   月历看的是「前面还堆着多少」，这块格子看的是「后面已经做掉多少」—— 同一份
+   数据反过来的那一面，所以就贴在月历下面，列同样从周一起算。
+   用 grid 显式定位每一格，不用 flex 列：列宽是 1fr、行高由方格自己撑，星期
+   标签和月份标签才能钉在它们该在的行列上，不必去猜某一列有多宽。 */
+.heat{ padding:2px 16px 14px }
+.heathint{ font-size:11px; color:var(--faint); line-height:1.6; margin-bottom:10px }
+.heatgrid{
+  display:grid; gap:3px; max-width:326px;
+  grid-template-columns:13px repeat(18, minmax(0,1fr));
+  grid-template-rows:11px repeat(7, auto);
+}
+.hmon{ font-family:var(--mono); font-size:9px; line-height:11px; color:var(--faint);
+       white-space:nowrap }
+.hwd{ font-family:var(--mono); font-size:9px; color:var(--faint); align-self:center }
+.hc{ aspect-ratio:1; border-radius:2px; background:var(--h0) }
+.hc.l1{ background:var(--h1) } .hc.l2{ background:var(--h2) }
+.hc.l3{ background:var(--h3) } .hc.l4{ background:var(--h4) }
+/* 本周还没到的那几天：留着格子占位，但不画底 —— 空成绩和「还没轮到」是两回事。 */
+.hc.lx{ background:none }
+/* 悬停的那一格描一圈：底下那行报的是哪一天，得看得出来。 */
+.hc.on{ box-shadow:0 0 0 1.5px var(--ink) }
+.hleg .hc.on{ box-shadow:none }
+.heatfoot{ display:flex; align-items:center; gap:8px; margin-top:9px;
+           font-size:11px; color:var(--muted) }
+.hleg{ margin-left:auto; display:flex; align-items:center; gap:3px;
+       font-size:10px; color:var(--faint) }
+.hleg .hc{ width:9px; aspect-ratio:1 }
+
+
+/* ── 边栏底部的两块小结 ────────────────────────────────────────────────────
+   一行读数 + 一组分组进度。热力格回答「过去做了多少」，这两块回答「这一周
+   怎么样、哪一类欠得最多」—— 都是那张清单本身答不上来的问题。 */
+.wkstat{ display:flex; margin:0 16px 4px; border:1px solid var(--line);
+         border-radius:10px; overflow:hidden; background:var(--panel) }
+.wkstat > div{ flex:1; padding:10px 12px; display:flex; flex-direction:column; gap:3px }
+.wkstat > div + div{ border-left:1px solid var(--line) }
+.wkstat b{ font-size:19px; font-weight:600; letter-spacing:-.02em;
+           font-variant-numeric:tabular-nums; line-height:1.1 }
+.wkstat i{ font-style:normal; font-size:10.5px; color:var(--faint) }
+.glist{ padding:2px 16px 20px }
+.grow{ display:flex; align-items:center; gap:10px; padding:7px 0; font-size:12.5px }
+.grow .nm{ width:44px; flex:none; color:var(--muted);
+           overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+.grow .bar{ flex:1 }
+.grow .v{ font-family:var(--mono); font-size:11px; color:var(--faint);
+          font-variant-numeric:tabular-nums; width:34px; text-align:right }
+
+/* 左栏装的是月历、18 周热力格和一周读数，340px 下它们全都挤着；桌面上给它更多宽度，
+   清单那边本来就宽得有余。 */
+@media (min-width:1100px){ .twopane{ --rail:470px } }

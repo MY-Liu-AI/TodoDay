@@ -1,0 +1,370 @@
+/* Shared tool shell layer, loaded after kit.css.
+ *
+ * The shell is thumb-first, but it is not a phone column parked in the middle
+ * of a desktop. .stage fills whatever viewport it is given; an app with a
+ * control side and a result side declares .twopane, which is one column on a
+ * phone and a rail + stage on a desk. Four rules:
+ *
+ *   1. One thumb. Primary actions sit in a bottom bar inside the safe area;
+ *      nothing important lives in a top corner.
+ *   2. The result is a SCREEN, not a section. .screen stacks and slides, so the
+ *      score / the winner / the total arrives on its own surface that can be
+ *      screenshotted without cropping.
+ *   3. Width is not free. Full-bleed is the shell, not the text: reading
+ *      content sits in .narrow so a line of Chinese never runs 1920px wide.
+ *   4. Print is a real output. @media print drops the chrome so ⌘P is a genuine
+ *      PDF export rather than a wrecked copy of the app.
+ */
+
+:root {
+  --rail: 340px;           /* the control side of a .split */
+  --rail-wide: 400px;
+  --read: 760px;           /* comfortable measure for reading/answering */
+  --sheet-w: 480px;
+  --bar-h: 60px;
+  --safe-b: env(safe-area-inset-bottom, 0px);
+}
+
+/* .ib and .screen set display, which beats [hidden]'s UA rule — without this a
+   "hidden" back button stays on screen. */
+[hidden] { display: none !important }
+
+html, body { height: 100% }
+body { overscroll-behavior-y: none }
+
+/* ── shell ───────────────────────────────────────────────────────────────── */
+.stage {
+  position: relative;
+  width: 100%;
+  /* A definite height, not just a minimum: every screen inside scrolls on its
+     own, and percentage/max-height children (a poster canvas, a map) can only
+     resolve against a definite one. With min-height alone an oversized canvas
+     grows the shell and pushes its own caption off the bottom of the page. */
+  height: 100dvh;
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── twopane: control rail + working area ────────────────────────────────── */
+/* One column on a phone, two on a desk. The rail scrolls on its own so a long
+   list never drags the working area out of view — on a desktop the two sides
+   must scroll independently or the layout is just a tall page with a gap in
+   it. */
+.twopane {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+}
+.twopane > .rail, .twopane > .work { min-width: 0; min-height: 0 }
+.twopane > .rail { display: flex; flex-direction: column; overflow: hidden }
+.twopane > .rail > .railbody { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch }
+.twopane > .work { position: relative; display: flex; flex-direction: column; overflow: hidden }
+
+/* Phones show the result first and the controls under it. Scrolling down to
+   reach the controls is the right order; scrolling down to see the outcome is
+   not. .rail-first opts out where the controls ARE the content. */
+@media (max-width: 899px) {
+  /* flex:none matters. .screen is a flex column, so a taller-than-viewport
+     .twopane is a shrinkable flex item — it gets squeezed back to the
+     viewport and its two rows silently clip instead of the screen
+     scrolling. Refusing to shrink is what turns it back into a page. */
+  .twopane { grid-template-rows: auto auto; height: auto; flex: none }
+  .twopane > .work { order: -1; min-height: 62dvh }
+  .twopane > .rail { border-top: 1px solid var(--line) }
+  /* .rail-first stacks controls above the work area, which strands the rail's
+     bottom bar in the middle of the page — a 复制结果 button sitting above the
+     result it copies. display:contents dissolves the rail's own box so its two
+     halves become grid items in their own right and the bar can be ordered last. */
+  .twopane.rail-first > .rail { display: contents }
+  .twopane.rail-first > .rail > .railbody { order: 1; border-bottom: 1px solid var(--line) }
+  .twopane.rail-first > .work { order: 2; min-height: 0 }
+  .twopane.rail-first > .rail > .bottombar { order: 3; border-top: 1px solid var(--line) }
+  /* One page, one scrollbar. The independent panes are a desktop affordance;
+     kept on a phone they nest three scroll areas inside one thumb, and the
+     bottom bar ends up parked halfway down a page that still has content below
+     it. Everything unwinds to normal flow. */
+  .twopane, .twopane > .rail, .twopane > .work,
+  .twopane > .rail > .railbody, .twopane .scroll { overflow: visible; height: auto }
+  .twopane > .rail > .railbody, .twopane .scroll { flex: none }
+}
+@media (min-width: 900px) {
+  .twopane { grid-template-columns: var(--rail) minmax(0, 1fr) }
+  .twopane.wide-rail { grid-template-columns: var(--rail-wide) minmax(0, 1fr) }
+  .twopane.rail-right { grid-template-columns: minmax(0, 1fr) var(--rail) }
+  .twopane.rail-right > .rail { order: 2; border-right: 0; border-left: 1px solid var(--line) }
+  .twopane > .rail { border-right: 1px solid var(--line) }
+}
+
+/* Reading measure. Full-bleed is for the shell; a question stem, a result card
+   or a settings form still stops at a line length a person can track. */
+.narrow { width: 100%; max-width: var(--read); margin-inline: auto }
+.narrow.tight { max-width: 560px }
+
+.topbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 52px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 86%, transparent);
+  backdrop-filter: saturate(1.4) blur(12px);
+  position: sticky;
+  top: 0;
+  z-index: 30;
+}
+.topbar .title { font-size: 14.5px; font-weight: 560; letter-spacing: -.015em }
+.topbar .sub { font-size: 11px; color: var(--faint); font-family: var(--mono) }
+.topbar .spacer { flex: 1 }
+/* The export trio + sound + theme land in one host element; it has to be a flex
+   row or the icons stack down the page. */
+.topbar .acts { display: flex; align-items: center; gap: 1px }
+
+/* Icon button — the only chrome control shape in the tool line. */
+.ib {
+  width: 32px; height: 32px;
+  display: grid; place-items: center;
+  flex: none;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color var(--fast), background var(--fast), border-color var(--fast);
+}
+.ib:hover { color: var(--ink); background: var(--raised) }
+.ib:active { transform: scale(.94) }
+.ib svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7;
+          stroke-linecap: round; stroke-linejoin: round }
+.ib.on { color: var(--accent); background: var(--accent-soft); border-color: var(--accent-soft) }
+
+/* ── screens ─────────────────────────────────────────────────────────────── */
+/* Screens stack in the same box and slide. A result that merely scrolled into
+   view would screenshot with the editor still attached above it. */
+.screens { position: relative; flex: 1; overflow: hidden }
+.screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: var(--panel);
+  transition: transform .38s var(--ease), opacity .28s var(--ease);
+  will-change: transform;
+}
+.screen[hidden] { display: none }
+.screen.out-left  { transform: translateX(-14%); opacity: 0; pointer-events: none }
+.screen.out-right { transform: translateX(100%);  opacity: 1; pointer-events: none }
+.screen.in { transform: none; opacity: 1 }
+
+.pad { padding: 16px }
+.grow { flex: 1 }
+.scroll { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch }
+
+/* ── bottom bar ──────────────────────────────────────────────────────────── */
+.bottombar {
+  flex: none;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 14px calc(10px + var(--safe-b));
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
+  backdrop-filter: blur(12px);
+  z-index: 20;
+}
+.bottombar .btn { height: 42px; flex: 1; font-size: 14px; border-radius: var(--r) }
+.bottombar .btn.wide { flex: 2 }
+/* 全屏之后底栏跟着变成一整屏宽,按钮不约束就会被拉成两米长的一条。栏铺满,内容居中。 */
+.bottombar > * { max-width: 300px }
+.bottombar { justify-content: center }
+/* 在侧栏里它是这一栏的页脚，就该占满整栏。 */
+.rail .bottombar { justify-content: stretch }
+.rail .bottombar > * { max-width: none }
+
+/* ── big touch controls ──────────────────────────────────────────────────── */
+.tbtn {
+  font: inherit;
+  font-size: 15px;
+  font-weight: 540;
+  width: 100%;
+  min-height: 48px;
+  padding: 12px 16px;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--fast), border-color var(--fast), transform .12s var(--ease);
+}
+.tbtn:hover { background: var(--raised) }
+.tbtn:active { transform: scale(.985) }
+.tbtn.on { border-color: var(--accent); background: var(--accent-soft) }
+
+/* Field: a label above an input, stacked — the only form shape used. */
+.field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 13px }
+.field > label { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--faint) }
+.field input, .field select, .field textarea {
+  font: inherit;
+  width: 100%;
+  min-height: 40px;
+  padding: 9px 11px;
+  color: var(--ink);
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  outline: none;
+  transition: border-color var(--fast), background var(--fast);
+}
+.field textarea { resize: vertical; min-height: 90px; line-height: 1.6; font-family: var(--mono); font-size: 12.5px }
+.field input:focus, .field select:focus, .field textarea:focus {
+  border-color: var(--accent); background: var(--panel);
+}
+.hint { font-size: 11.5px; color: var(--faint); line-height: 1.6 }
+
+/* Chips live in horizontally-scrolling rows; letting a two-word Chinese label
+   wrap turns a 24px row into a 44px one and breaks the row's rhythm. */
+.chip { white-space: nowrap }
+
+/* Switch row. */
+.sw {
+  --w: 40px;
+  position: relative;
+  width: var(--w); height: 23px;
+  flex: none;
+  border: 0;
+  padding: 0;
+  border-radius: 99px;
+  background: var(--line);
+  cursor: pointer;
+  transition: background var(--fast);
+}
+.sw::after {
+  content: '';
+  position: absolute;
+  top: 2.5px; left: 2.5px;
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  background: var(--panel);
+  box-shadow: 0 1px 2px rgba(0,0,0,.22);
+  transition: transform .22s var(--ease);
+}
+.sw[aria-checked=true], .sw.on { background: var(--accent) }
+.sw[aria-checked=true]::after, .sw.on::after { transform: translateX(calc(var(--w) - 23px)) }
+.swrow {
+  display: flex; align-items: center; gap: 12px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+.swrow:last-child { border-bottom: 0 }
+.swrow .t { font-size: 13.5px; font-weight: 500 }
+.swrow .d { font-size: 11.5px; color: var(--faint); margin-top: 2px; line-height: 1.5 }
+.swrow .txt { flex: 1; min-width: 0 }
+
+/* ── progress ────────────────────────────────────────────────────────────── */
+.bar { height: 4px; background: var(--line-soft); border-radius: 99px; overflow: hidden }
+.bar > i {
+  display: block; height: 100%;
+  background: var(--accent);
+  border-radius: 99px;
+  transition: width .45s var(--ease);
+}
+
+/* ── bottom sheet ────────────────────────────────────────────────────────── */
+.sheet-scrim {
+  position: fixed; inset: 0; z-index: 100;
+  background: color-mix(in srgb, var(--ink) 34%, transparent);
+  opacity: 0;
+  transition: opacity .26s var(--ease);
+  backdrop-filter: blur(2px);
+}
+.sheet-scrim.in { opacity: 1 }
+.sheet {
+  position: fixed;
+  left: 50%;
+  bottom: 0;
+  z-index: 101;
+  width: min(100%, var(--sheet-w));
+  max-height: 82dvh;
+  transform: translate(-50%, 100%);
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  border-radius: 16px 16px 0 0;
+  transition: transform .34s var(--ease);
+  padding-bottom: var(--safe-b);
+}
+.sheet.in { transform: translate(-50%, 0) }
+.sheet .grip {
+  width: 34px; height: 4px;
+  margin: 9px auto 3px;
+  border-radius: 99px;
+  background: var(--line);
+  flex: none;
+}
+.sheet .sheet-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 16px 12px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.sheet .sheet-head h3 { font-size: 14px; font-weight: 560 }
+.sheet .sheet-body { padding: 16px; overflow-y: auto }
+
+/* ── poster preview ──────────────────────────────────────────────────────── */
+.poster-scrim {
+  position: fixed; inset: 0; z-index: 200;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 14px;
+  padding: 22px;
+  background: color-mix(in srgb, #000 72%, transparent);
+  opacity: 0;
+  transition: opacity .3s var(--ease);
+}
+.poster-scrim.in { opacity: 1 }
+.poster-scrim img {
+  max-width: min(360px, 84vw);
+  max-height: 68dvh;
+  border-radius: 10px;
+  box-shadow: 0 24px 60px rgba(0,0,0,.5);
+  transform: translateY(10px) scale(.985);
+  transition: transform .36s var(--ease);
+}
+.poster-scrim.in img { transform: none }
+.poster-scrim .acts { display: flex; gap: 10px }
+.poster-scrim .tip { color: #fff9; font-size: 12px; text-align: center; max-width: 30ch; line-height: 1.6 }
+
+/* ── toast/empty ─────────────────────────────────────────────────────────── */
+.empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 9px;
+  padding: 46px 24px;
+  color: var(--faint);
+  text-align: center;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.empty svg { width: 30px; height: 30px; stroke: currentColor; fill: none; stroke-width: 1.2; opacity: .6 }
+
+/* ── print ───────────────────────────────────────────────────────────────── */
+@media print {
+  @page { margin: 14mm }
+  html, body { height: auto; background: #fff }
+  .topbar, .bottombar, .ib, .kit-theme, .kit-theme-float, .sheet, .sheet-scrim,
+  .poster-scrim, .no-print { display: none !important }
+  .stage { max-width: none; border: 0; min-height: 0 }
+  .screens { overflow: visible; height: auto }
+  .screen { position: static; overflow: visible; display: none }
+  .screen.in { display: block }
+  .print-only { display: block !important }
+  .panel, .card { break-inside: avoid }
+}
+.print-only { display: none }
