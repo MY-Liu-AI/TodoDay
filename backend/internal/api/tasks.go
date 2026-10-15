@@ -12,10 +12,10 @@ const maxBatch = 500
 
 // parseTaskInput validates the shared task fields carried by create/update/import.
 func parseTaskInput(w http.ResponseWriter, in struct {
-	T string `json:"t"`
-	P int    `json:"p"`
+	T   string `json:"t"`
+	P   int    `json:"p"`
 	Due string `json:"due"`
-	G string `json:"g"`
+	G   string `json:"g"`
 }) (store.TaskInput, bool) {
 	title, ok := cleanTitle(in.T)
 	if !ok {
@@ -40,10 +40,10 @@ func parseTaskInput(w http.ResponseWriter, in struct {
 }
 
 type taskPayload struct {
-	T    string `json:"t"`
-	P    int    `json:"p"`
-	Due  string `json:"due"`
-	G    string `json:"g"`
+	T   string `json:"t"`
+	P   int    `json:"p"`
+	Due string `json:"due"`
+	G   string `json:"g"`
 }
 
 func (s *Server) listTasks(w http.ResponseWriter, r *http.Request, u *store.User, wid int64) {

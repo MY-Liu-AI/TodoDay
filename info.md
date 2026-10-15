@@ -27,6 +27,7 @@
 - 番茄专注（侧栏「我的计划」之下）：列出今天要处理的事（今天截止 + 逾期未完成），可绑定一件或自由开始，任务可在本页直接勾选完成；固定 25 分钟倒计时，开始/暂停/继续/放弃；走完记一个番茄，中途放弃只计时长（不足 1 分钟不记）。进行中的倒计时存在浏览器 localStorage，刷新页面或切换模块后按原结束时刻继续，离开期间走完的自动补记。今日番茄数、今日/本周/本月专注时长、近 4 周每日柱图、今日记录均来自服务端 focus_sessions，按工作区时区归属到结束当天；写入失败提示并可重试。
 - CSV、Canvas海报、打印/PDF保留在统计页。图片/PDF由用户触发，不自动外发。
 - 企业微信助手（可选，独立进程）：在企业微信里发消息即记录一条任务，支持中英文相对日期、`#分组`、`!!!`/`!!`/`!` 优先级；记录成功后回复内容摘要（日期+星期、分组、优先级）。不处理查询、完成、删除与统计，非文本消息忽略。
+- 设置页（侧栏「设置」）：在网页上填写机器人 BotID / Secret 与 Kimi API Key / 接口地址 / 模型，并启停助手。凭据由服务端 AES-256-GCM 加密保存（主密钥 `TODO_CONFIG_KEY`），页面只显示「已配置/未配置」不回显密钥，留空提交即保留原值；仅工作区所有者可改。助手每次重连前重新取配置，改完重连即生效。服务端未设主密钥时只能保存非密钥项，页面会明示；主密钥丢失则已存凭据不可恢复、需重填。
 
 ## 结构
 
@@ -35,14 +36,15 @@ frontend/src/store.ts：响应式状态、乐观更新/回滚、409 冲突替换
 frontend/src/focus.ts：番茄计时器状态机（idle/running/paused/done）、进行中计时的 localStorage 持久化与恢复、专注记录写入与重试、统计读取、结束提示音。
 frontend/src/api.ts：REST 客户端（超时、CSRF 头、ApiError 带服务端最新任务）。
 frontend/src/copy.ts：本地化 UI 文案。
-frontend/src/components/：AuthView、CalendarView（独立月历与日议程）、Calendar（小月历筛选）、TaskDialog（可访问新建/编辑表单）、List（列表、勾选、拖拽及键盘排序）、FocusView（番茄专注页）、Heat/Recap/Stats（统计，同源数据）、Icon。
+frontend/src/components/：AuthView、CalendarView（独立月历与日议程）、Calendar（小月历筛选）、TaskDialog（可访问新建/编辑表单）、List（列表、勾选、拖拽及键盘排序）、FocusView（番茄专注页）、SettingsView（助手与 AI 凭证配置）、Heat/Recap/Stats（统计，同源数据）、Icon。
 frontend/src/lib/model.js：搜索、排序、日期网格纯函数（validState 仅用于 legacy 导入校验）。
 frontend/src/lib/todo.js：解析、分桶、日期标签（无样本注入）。
 frontend/src/lib/heat.js：task_events 聚合的换算与统计口径。
 frontend/src/lib/palette.js / export.ts / fx.ts：中英分类色映射、CSV/海报导出、音效触感。
 backend/cmd/server/main.go：服务入口（优雅退出、内嵌时区库）。
 backend/internal/api/：HTTP 路由、会话认证、CSRF/安全头/限流、任务与统计接口、番茄专注接口、静态托管 SPA。
-backend/internal/store/：SQLite 连接（WAL、单写）、embedded migration、users/sessions、tasks、task_events 聚合、focus_sessions 记录与聚合。
+backend/internal/store/：SQLite 连接（WAL、单写）、embedded migration、users/sessions、tasks、task_events 聚合、focus_sessions 记录与聚合、workspace_assistant_config 读写（密文由上层处理）。
+backend/internal/secretbox/：助手凭据的 AES-256-GCM 加解密，主密钥来自 `TODO_CONFIG_KEY`；缺失时不阻止启动但拒绝保存密钥。
 frontend/src/styles/planner.css：浅色工作台样式，沿用 kit/tool/app 基础，可选深色。
 
 ## 字体与许可

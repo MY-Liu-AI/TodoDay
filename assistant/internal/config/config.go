@@ -36,9 +36,10 @@ type Config struct {
 }
 
 // required 列出必填键，缺失时按此顺序报出。
+//
+// 机器人凭据不再必填：现在可以在网页设置页里填，助手启动后从后端取。
+// 环境变量里的 WECOM_BOT_ID / WECOM_BOT_SECRET 仍可用，作为后端未配置时的兜底。
 var required = []string{
-	"WECOM_BOT_ID",
-	"WECOM_BOT_SECRET",
 	"TODO_USERNAME",
 	"TODO_PASSWORD",
 	"TODO_WORKSPACE_ID",
@@ -113,3 +114,63 @@ func Load() (*Config, error) {
 
 // KimiEnabled 说明是否配置了 AI 解析。未配置时全部走规则解析。
 func (c *Config) KimiEnabled() bool { return c.KimiKey != "" }
+
+// HasEnvBot 说明环境变量里是否给了机器人凭据（兜底路径）。
+func (c *Config) HasEnvBot() bool { return c.BotID != "" && c.BotSecret != "" }
+
+// Credentials 是最终生效的一组凭据。来源可能是后端或环境变量。
+type Credentials struct {
+	BotID     string
+	BotSecret string
+	KimiKey   string
+	KimiBase  string
+	Model     string
+	Source    string // "backend" | "env"
+}
+
+// Resolve 把「后端返回的配置」与「环境变量」合并成最终生效值。
+//
+// 规则：后端优先；后端某字段为空时回落到环境变量；后端整体不存在
+// （remote 为 nil）则全部用环境变量。这样既让网页配置生效，又不破坏
+// 已有的 .env 部署。
+func (c *Config) Resolve(remote *RemoteCredentials) Credentials {
+	out := Credentials{
+		BotID:     c.BotID,
+		BotSecret: c.BotSecret,
+		KimiKey:   c.KimiKey,
+		KimiBase:  c.KimiBase,
+		Model:     c.Model,
+		Source:    "env",
+	}
+	if remote == nil {
+		return out
+	}
+	out.Source = "backend"
+	if remote.BotID != "" {
+		out.BotID = remote.BotID
+	}
+	if remote.BotSecret != "" {
+		out.BotSecret = remote.BotSecret
+	}
+	if remote.KimiAPIKey != "" {
+		out.KimiKey = remote.KimiAPIKey
+	}
+	if remote.KimiBase != "" {
+		out.KimiBase = strings.TrimRight(remote.KimiBase, "/")
+	}
+	if remote.KimiModel != "" {
+		out.Model = remote.KimiModel
+	}
+	return out
+}
+
+// RemoteCredentials 是后端返回的凭据形状。与 todoclient.BotCredentials 字段
+// 一致，但在这里独立声明以避免 config 依赖 todoclient。
+type RemoteCredentials struct {
+	Enabled    bool
+	BotID      string
+	BotSecret  string
+	KimiAPIKey string
+	KimiBase   string
+	KimiModel  string
+}

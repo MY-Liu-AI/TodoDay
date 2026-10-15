@@ -37,6 +37,12 @@ type Callback interface {
 	OnEvent(ctx context.Context, reqID string, body *EventBody)
 }
 
+// CredentialSource 在每次（重）连前被调用，返回这次订阅要用的凭据。
+//
+// 这是「网页上改了配置、不用重启进程」能成立的机制：重连时重新取一遍，
+// 新凭据自然带上。返回错误时客户端沿用上一次的值并记日志，不阻断重连。
+type CredentialSource func(ctx context.Context) (botID, secret string, err error)
+
 // Client 维护一条到企业微信的长连接：订阅、心跳、读帧、断线重连。
 //
 // 它同时充当 bot.Sender：回复走 Reply(reqID, content)，与回调的 req_id 绑定。
@@ -45,6 +51,7 @@ type Client struct {
 	secret string
 	wsURL  string
 	cb     Callback
+	creds  CredentialSource // 为 nil 时固定使用构造时的凭据
 
 	mu   sync.Mutex
 	conn *websocket.Conn // 当前连接；重连期间为 nil
@@ -55,6 +62,47 @@ func NewClient(botID, secret, wsURL string, cb Callback) *Client {
 		wsURL = DefaultWSURL
 	}
 	return &Client{botID: botID, secret: secret, wsURL: wsURL, cb: cb}
+}
+
+// SetCredentialSource 注入动态凭据来源。构造时传的 botID/secret 成为
+// 「取不到时的兜底值」。
+func (c *Client) SetCredentialSource(src CredentialSource) {
+	c.mu.Lock()
+	c.creds = src
+	c.mu.Unlock()
+}
+
+// refreshCredentials 在连接前刷新凭据。失败不致命：沿用旧值。
+func (c *Client) refreshCredentials(ctx context.Context) {
+	c.mu.Lock()
+	src := c.creds
+	c.mu.Unlock()
+	if src == nil {
+		return
+	}
+	botID, secret, err := src(ctx)
+	if err != nil {
+		log.Printf("aibot: 刷新凭据失败，沿用上一次的值：%v", err)
+		return
+	}
+	if botID == "" || secret == "" {
+		log.Printf("aibot: 刷新到的凭据为空，沿用上一次的值")
+		return
+	}
+	c.mu.Lock()
+	changed := botID != c.botID || secret != c.secret
+	c.botID, c.secret = botID, secret
+	c.mu.Unlock()
+	if changed {
+		log.Printf("aibot: 已换用新凭据（BotID=%s）", botID)
+	}
+}
+
+// currentCredentials 读出当前生效的凭据。
+func (c *Client) currentCredentials() (string, string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.botID, c.secret
 }
 
 // SetCallback 在构造之后注入回调。
@@ -104,6 +152,13 @@ func (c *Client) Run(ctx context.Context) error {
 
 // session 建立一条连接并跑到它断开为止。
 func (c *Client) session(ctx context.Context) error {
+	// 每次连接前刷新凭据：网页上改了配置，重连就生效。
+	c.refreshCredentials(ctx)
+	botID, secret := c.currentCredentials()
+	if botID == "" || secret == "" {
+		return errors.New("没有可用的机器人凭据（后端未配置且环境变量为空）")
+	}
+
 	dialer := websocket.Dialer{HandshakeTimeout: 15 * time.Second}
 	conn, resp, err := dialer.DialContext(ctx, c.wsURL, nil)
 	if err != nil {
@@ -119,7 +174,7 @@ func (c *Client) session(ctx context.Context) error {
 	defer c.setConn(nil)
 
 	// 订阅。失败说明 BotID/Secret 不对，重连也救不回来，但要如实报出来。
-	sub := NewSubscribe(newReqID("sub"), c.botID, c.secret)
+	sub := NewSubscribe(newReqID("sub"), botID, secret)
 	if err := c.write(ctx, conn, sub); err != nil {
 		return fmt.Errorf("发送订阅失败：%w", err)
 	}

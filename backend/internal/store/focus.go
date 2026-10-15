@@ -17,7 +17,7 @@ type FocusSession struct {
 	TaskTitle   string `json:"taskTitle"`
 	PlannedSec  int    `json:"plannedSec"`
 	DurationSec int    `json:"durationSec"`
-	Status      string `json:"status"` // completed | abandoned
+	Status      string `json:"status"`    // completed | abandoned
 	StartedAt   int64  `json:"startedAt"` // Unix ms
 	EndedAt     int64  `json:"endedAt"`   // Unix ms
 }

@@ -62,25 +62,37 @@ assistant/
 
 ## 配置
 
+### 推荐：在网页「设置」页填
+
+登录 TodoDay 网页版，侧栏「设置」里填机器人 BotID / Secret 与 Kimi 凭证，点保存。凭据由后端加密保存（主密钥 `TODO_CONFIG_KEY`，见后端文档），助手启动时自动取用，**改完配置重连即生效，不用重启进程**。
+
+此时下面的 `WECOM_BOT_ID` / `WECOM_BOT_SECRET` / `KIMI_API_KEY` 都可以留空。
+
+### 兜底：环境变量
+
 复制 `.env.example` 为 `.env` 填写。**本服务不读 `.env` 文件**，只读进程环境变量——用 `export $(grep -v '^#' .env | xargs)` 导入，或写进 systemd / docker 的环境配置。
+
+合并规则（`config.Resolve`）：**后端优先**；后端某字段为空则该字段回落到环境变量；后端整体未配置则全部用环境变量。所以现有的 `.env` 部署不受影响。
 
 | 变量 | 默认 | 机密 | 说明 |
 | --- | --- | :---: | --- |
 | `ASSISTANT_ADDR` | `:8090` | | 探活端口（`/healthz`）；长连接模式下不是消息入口 |
-| `WECOM_BOT_ID` | 必填 | | 智能机器人 BotID |
-| `WECOM_BOT_SECRET` | 必填 | ✅ | 机器人 Secret |
+| `WECOM_BOT_ID` | 空 | | 智能机器人 BotID（**网页设置页可填，这里是兜底**） |
+| `WECOM_BOT_SECRET` | 空 | ✅ | 机器人 Secret（同上） |
 | `WECOM_BOT_WS_URL` | `wss://openws.work.weixin.qq.com` | | 长连接地址 |
 | `TODO_API_BASE` | `http://127.0.0.1:8080` | | TodoDay 后端地址 |
 | `TODO_USERNAME` | 必填 | | 用于登录的账号 |
 | `TODO_PASSWORD` | 必填 | ✅ | 该账号密码 |
 | `TODO_WORKSPACE_ID` | 必填 | | 目标工作区 ID |
-| `KIMI_API_KEY` | 空 | ✅ | 留空则全部走规则解析 |
+| `KIMI_API_KEY` | 空 | ✅ | 留空则全部走规则解析（**网页设置页可填，这里是兜底**） |
 | `MOONSHOT_API_KEY` | 空 | ✅ | 同上，别名键 |
 | `KIMI_BASE_URL` | `https://api.moonshot.cn/v1` | | Moonshot 的 OpenAI 兼容地址 |
 | `ASSISTANT_MODEL` | `moonshot-v1-8k` | | 解析用模型 |
 | `PARSE_TIMEOUT` | `8s` | | AI 调用超时 |
 
-必填项缺失时启动即失败，并列出**缺了哪些键名**（不含值）。
+必填项缺失时启动即失败，并列出**缺了哪些键名**（不含值）。机器人凭据不再是必填：两边（网页 + 环境变量）都没有时，启动会报错并指向设置页。
+
+启动日志里会打印 `凭据来源：backend` 或 `凭据来源：env`，一眼能看出当前用的是哪一份。
 
 ## 企业微信后台配置
 
@@ -121,6 +133,8 @@ go run ./cmd/assistant -record-test "明天 交周报 #工作 !!!"
 
 | 现象 | 含义 |
 | --- | --- |
+| `没有可用的机器人凭据` | 网页设置页和环境变量都没填 BotID/Secret |
+| `凭据来源：env`（但你明明在网页填了） | 助手登录用的账号不是该工作区的 **owner**，取不到明文凭据；或后端没设 `TODO_CONFIG_KEY` |
 | `无权访问该工作区：账号不属于工作区 N` | `TODO_WORKSPACE_ID` 填错了 |
 | `登录被拒绝：状态码 401` | `TODO_USERNAME` / `TODO_PASSWORD` 填错了 |
 | `缺少必填配置：A、B` | 列出所有缺失的键名（不含值） |

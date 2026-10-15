@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"tododay/internal/secretbox"
 	"tododay/internal/store"
 )
 
@@ -26,15 +28,25 @@ type Server struct {
 	sessionTTL time.Duration
 	limiter    *loginLimiter
 	mux        *http.ServeMux
+	// box 负责助手凭据的加解密。为 nil 表示未配置主密钥：
+	// 读取掩码视图仍可用，但保存密钥会被拒绝。
+	box *secretbox.Box
 }
 
 func NewServer(st *store.Store, staticDir string) *Server {
+	// 主密钥缺失不阻止启动：其余功能不该被牵连。这里拿到的 nil 会让
+	// 保存密钥的请求被明确拒绝，而不是悄悄退化成明文存储。
+	box, err := secretbox.Open()
+	if err != nil && !errors.Is(err, secretbox.ErrNoKey) {
+		log.Printf("读取 %s 失败：%v", secretbox.EnvKey, err)
+	}
 	s := &Server{
 		st:         st,
 		staticDir:  staticDir,
 		sessionTTL: 7 * 24 * time.Hour,
 		limiter:    newLoginLimiter(10, time.Minute),
 		mux:        http.NewServeMux(),
+		box:        box,
 	}
 	s.routes()
 	return s
@@ -59,6 +71,11 @@ func (s *Server) routes() {
 	// 番茄专注：记录一次专注、读取今日/本周/本月/每日统计。
 	s.mux.HandleFunc("POST /api/workspaces/{wid}/focus/sessions", s.withAuth(s.withWorkspace(s.createFocusSession)))
 	s.mux.HandleFunc("GET /api/workspaces/{wid}/focus/stats", s.withAuth(s.withWorkspace(s.focusStats)))
+
+	// 助手配置：成员可看掩码，只有 owner 能改、能取明文凭据。
+	s.mux.HandleFunc("GET /api/workspaces/{wid}/assistant", s.withAuth(s.withWorkspace(s.getAssistantConfig)))
+	s.mux.HandleFunc("PUT /api/workspaces/{wid}/assistant", s.withAuth(s.withWorkspaceOwner(s.putAssistantConfig)))
+	s.mux.HandleFunc("GET /api/workspaces/{wid}/assistant/credentials", s.withAuth(s.withWorkspaceOwner(s.assistantCredentials)))
 }
 
 // Handler wraps the mux with security and panic-recovery middleware.
@@ -77,8 +94,12 @@ func (s *Server) Handler() http.Handler {
 		// Mutating API calls must carry a non-simple header. Cross-site forms
 		// cannot set it without a CORS preflight, which we never answer, so this
 		// blocks CSRF even though the session cookie is SameSite=Lax.
-		if strings.HasPrefix(r.URL.Path, "/api/") &&
-			(r.Method == http.MethodPost || r.Method == http.MethodPatch || r.Method == http.MethodDelete) {
+		//
+		// 用「不是 GET/HEAD/OPTIONS 就要校验」而不是枚举写方法：之前只列了
+		// POST/PATCH/DELETE，新增 PUT 路由时就漏掉了，被测试抓到。白名单
+		// 读方法比黑名单写方法安全 —— 漏一个只会多校验，不会少校验。
+		isRead := r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions
+		if strings.HasPrefix(r.URL.Path, "/api/") && !isRead {
 			if r.Header.Get("X-Requested-With") != "XMLHttpRequest" {
 				writeError(w, http.StatusForbidden, "csrf", "缺少请求头")
 				return
@@ -163,6 +184,31 @@ func (s *Server) withWorkspace(next func(http.ResponseWriter, *http.Request, *st
 		}
 		if _, err := s.st.Membership(r.Context(), u.ID, wid); err != nil {
 			mapStoreError(w, err)
+			return
+		}
+		next(w, r, u, wid)
+	}
+}
+
+// withWorkspaceOwner 在 withWorkspace 之上再加一层角色检查。
+//
+// withWorkspace 拿到角色后丢掉了（它只关心「是不是成员」），所以这是仓库里
+// 第一处 owner-only 的边界 —— 需要把 Membership 的返回值接住再比对。
+func (s *Server) withWorkspaceOwner(next func(http.ResponseWriter, *http.Request, *store.User, int64)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		u := r.Context().Value(ctxUser).(*store.User)
+		wid, err := parseWID(r)
+		if err != nil || wid <= 0 {
+			writeError(w, http.StatusBadRequest, "validation_failed", "无效的工作区 ID")
+			return
+		}
+		role, err := s.st.Membership(r.Context(), u.ID, wid)
+		if err != nil {
+			mapStoreError(w, err)
+			return
+		}
+		if role != "owner" {
+			writeError(w, http.StatusForbidden, "forbidden", "只有工作区所有者可以修改助手配置")
 			return
 		}
 		next(w, r, u, wid)

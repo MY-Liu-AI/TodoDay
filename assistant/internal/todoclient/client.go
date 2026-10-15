@@ -72,6 +72,63 @@ type apiError struct {
 	Message string `json:"message"`
 }
 
+// BotCredentials 是后端存的助手凭据（明文，仅 owner 能取）。
+type BotCredentials struct {
+	Enabled    bool   `json:"enabled"`
+	BotID      string `json:"botId"`
+	BotSecret  string `json:"botSecret"`
+	KimiAPIKey string `json:"kimiApiKey"`
+	KimiBase   string `json:"kimiBase"`
+	KimiModel  string `json:"kimiModel"`
+}
+
+// ErrNotConfigured 表示后端尚未配置助手。调用方据此回落到环境变量。
+var ErrNotConfigured = errors.New("后端尚未配置助手")
+
+// FetchCredentials 从后端取助手凭据。
+//
+// 这是用户在网页上填的配置能生效的通道：助手每次（重）连前都来取一次，
+// 改了配置不用重启进程。404 单独映射成 ErrNotConfigured，让调用方能
+// 区分「没配」和「出错」。
+func (c *Client) FetchCredentials(ctx context.Context) (*BotCredentials, error) {
+	path := fmt.Sprintf("/api/workspaces/%d/assistant/credentials", c.workspaceID)
+	resp, err := c.do(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("连接后端失败：%w", err)
+	}
+	// 会话过期：重登一次再试。
+	if resp.StatusCode == http.StatusUnauthorized {
+		resp.Body.Close()
+		if err := c.Login(ctx); err != nil {
+			return nil, fmt.Errorf("%w（自动重登失败）", ErrAuth)
+		}
+		resp, err = c.do(ctx, http.MethodGet, path, nil)
+		if err != nil {
+			return nil, fmt.Errorf("连接后端失败：%w", err)
+		}
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		var out BotCredentials
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			return nil, fmt.Errorf("凭据响应不是合法 JSON：%w", err)
+		}
+		return &out, nil
+	case http.StatusNotFound:
+		return nil, ErrNotConfigured
+	case http.StatusForbidden:
+		var body apiError
+		_ = json.NewDecoder(resp.Body).Decode(&body)
+		return nil, fmt.Errorf("%w：%s", ErrForbidden, body.Message)
+	default:
+		var body apiError
+		_ = json.NewDecoder(resp.Body).Decode(&body)
+		return nil, fmt.Errorf("读取凭据失败（%d）：%s", resp.StatusCode, body.Message)
+	}
+}
+
 // WorkspaceTimezone 读取目标工作区的时区。
 //
 // 相对日期必须按工作区所在时区解析：服务器跑在 UTC 而工作区是

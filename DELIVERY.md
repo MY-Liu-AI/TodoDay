@@ -49,6 +49,19 @@
 - **仍未验证**：订阅成功之后的消息收发（需要真实 BotID + Secret），以及在企业微信客户端里的实际对话体验。README 明确写了「订阅成功只代表连接建立，不代表消息链路通了」。
 - **未实现**：不含部署（无 Dockerfile/systemd/CI）；不做查询/完成/删除/统计指令（一条消息 = 记一条任务）；固定单工作区，不支持多人绑定；无持久化队列（进程重启会丢未发出的回执，任务本身已落库）；无多轮对话；非文本消息忽略（语音因已转文本可记录）；**不支持多实例**（同一机器人只能一条长连接）。
 
+**设置页：网页配置企业微信助手与 AI 凭证（2026-10-15 增量）**
+- 新表 `workspace_assistant_config`（migration 0003，含 down）：`workspace_id` 作主键（一个工作区一份，由数据库保证）、`enabled`、`bot_id`、`bot_secret_enc`、`kimi_api_key_enc`、`kimi_base`、`kimi_model`、`updated_by`、`updated_at`、`version`（乐观并发）。
+- 加密：新包 `backend/internal/secretbox`，AES-256-GCM，主密钥来自环境变量 `TODO_CONFIG_KEY`（base64 编码的 32 字节），密文格式 `base64(nonce ‖ ciphertext ‖ tag)`，nonce 每次随机。**只加密两个密钥字段**，`bot_id`/`kimi_base`/`kimi_model` 保持明文便于排查。`go run ./cmd/server -gen-config-key` 生成一把新密钥。
+- **诚实地说明这意味着什么**：这是仓库里第一处需要「解密回明文并交给外部服务」的凭据（Bot Secret 发给企业微信、Kimi Key 发给 Moonshot）。此前唯一的明文凭据是 `sessions.token`，但它只做等值查找、从不解密外出。**主密钥丢失则已存凭据不可恢复**，只能在设置页重新填写——设置页与启动日志都写明了这一点。
+- API（`backend/internal/api/assistant.go`）：`GET /api/workspaces/{wid}/assistant`（成员可读，**掩码视图**，只回 `botSecretSet`/`kimiApiKeySet` 布尔值，永不回密钥本身）；`PUT /api/workspaces/{wid}/assistant`（**仅 owner**，密钥字段为 `*string`，`nil`/空表示保留原值，`version` 不匹配 409 且响应**不带 `task` 字段**）；`GET /api/workspaces/{wid}/assistant/credentials`（**仅 owner**，唯一返回明文的接口，供助手进程取用）。
+- 权限：新增 `withWorkspaceOwner` 中间件——这是仓库里**第一处 owner-only 边界**（原 `withWorkspace` 调了 `Membership` 但丢掉了角色）。个人工作区里 owner 就是本人，不影响日常使用。
+- 主密钥缺失时的行为（关键，避免悄悄降级）：服务**照常启动**（其余功能不受牵连），启动日志给一行提示；`GET` 掩码视图仍可用并回 `encryptionAvailable:false`；保存**含密钥**的请求被拒绝（400 `encryption_unavailable`，信息里指明要设 `TODO_CONFIG_KEY`）并且**不留任何配置行**；只改非密钥项仍允许保存。**绝不退化成明文存储**——有测试直接断言被拒请求后数据库里没有行。
+- 前端：侧栏新增「设置」页（`SettingsView.vue`，齿轮图标），两个密钥框为 `type="password"`、**回填时一律清空**、只在用户确实输入时才随请求发送；`store.ts` 新增 `loadAssistantConfig`/`saveAssistantConfig`，`st.assistant` 只存掩码视图；登出时清空；**密钥不进 localStorage**（有测试扫描全部 `localStorage.setItem` 调用断言）。页面显式提示：主密钥缺失、仅 owner 可改、主密钥丢失不可恢复。
+- 助手进程改造：`WECOM_BOT_ID`/`WECOM_BOT_SECRET` **不再是启动必填**。`todoclient.FetchCredentials` 向后端取凭据（404 映射为 `ErrNotConfigured`，401 自动重登）；`config.Resolve` 合并——**后端优先、后端字段为空回落环境变量、后端整体不存在则全用环境变量**，现有 `.env` 部署不受影响。`aibot.Client` 新增 `SetCredentialSource`，**每次重连前重新取凭据**，网页上改完配置重连即生效、无需重启；取失败沿用上一次的值并记日志，不阻断重连。两边都没有凭据时启动直接报错并指向设置页。
+- 顺带修复的真 bug：CSRF 中间件原先枚举 `POST/PATCH/DELETE`，**漏了 PUT**，新增的 PUT 路由被测试抓到未校验。改为「非 GET/HEAD/OPTIONS 一律校验」——白名单读方法比黑名单写方法安全，漏一个只会多校验不会少校验。
+- 测试：后端新增 `secretbox`（往返、非确定性 nonce、错密钥拒绝、篡改检测、nil Box 不静默通过、长度校验不回显密钥）、`store/assistant_test.go`（首建/更新、留空保留、冲突用 `ErrConfigConflict` 而非 `ErrConflict`、单行约束、级联删除）、`api/assistant_test.go`（**响应体整体扫描不含明文密钥**、缺主密钥拒绝且不落库、留空保留、409 不带 `task`、跨工作区 403、未登录 401、未知字段 400、缺 CSRF 头 403、`-gen-config-key` 输出可用）；`migrate_test.go` 增加「每个 up 必有 down」断言。助手新增 `FetchCredentials` 四条（200/404/401 重登/403）与 `Resolve` 四条（nil 回落、后端优先、字段级回落、两边皆空）。前端新增 `settings.test.mjs` 八条契约。全部通过。
+- **未实现**：不启停助手进程（用户明确只要配置）；不显示助手在线状态；不做密钥轮换/主密钥迁移工具（换主密钥 = 重新填写）；不做多人各自一套机器人。
+
 ## 环境变量与启动（名称，非密钥值）
 
 | 变量 | 默认 | 用途 |
@@ -57,14 +70,16 @@
 | `TODO_DB` | `tododay.db` | SQLite 文件路径 |
 | `TODO_STATIC` | 空 | 前端构建产物目录；为空则不托管静态文件 |
 | `TODO_SECURE_COOKIES` | 未设置 | 置 `1` 时会话 Cookie 加 Secure（HTTPS 部署时） |
+| `TODO_CONFIG_KEY` | 未设置 | 助手凭据的加密主密钥（base64 的 32 字节）。缺失时服务照常启动，但设置页无法保存密钥。用 `go run ./cmd/server -gen-config-key` 生成。**丢失不可恢复**，须妥善保管 |
 
 开发：`cd frontend && npm install && npm run dev`（Vite 将 /api 代理到 :8080）；另起 `cd backend && go run ./cmd/server`。
 生产单进程：`npm run build` 后 `go run ./cmd/server -static ../frontend/dist` 同源托管 SPA（非 /api 路径回退 index.html）。
 
 ## migration / 回滚 / 备份
 
-- 启动时自动执行未应用的 up migration；每个 migration 有对应 down SQL；`store.RollbackAll()`（测试覆盖）可全部回退，含删除 schema_migrations。当前版本：0001_init、0002_focus。
-- 备份：直接复制 SQLite 数据库文件（WAL 模式下先 `PRAGMA wal_checkpoint(FULL)` 或随文件复制 `-wal`/`-shm`）；或 `VACUUM INTO 'backup.db'`。
+- 启动时自动执行未应用的 up migration；每个 migration 有对应 down SQL（有测试强制 up/down 成对）；`store.RollbackAll()`（测试覆盖）可全部回退，含删除 schema_migrations。当前版本：0001_init、0002_focus、0003_assistant_config。
+- **备份时必须同时备份 `TODO_CONFIG_KEY`**：只备份数据库文件而丢了主密钥，`workspace_assistant_config` 里的两个 `*_enc` 列就是一堆解不开的字节。
+- 备份：直接复制 SQLite 数据库文件（WAL 模式下先 `PRAGMA wal_checkpoint(FULL)` 或随文件复制 `-wal`/`-shm`）；或 `VACUUM INTO 'backup.db'`。**实测提醒**：本服务用单连接且很少触发自动 checkpoint，一个全新库在短时间内**全部数据（含 migration 建的表）都只在 `-wal` 里**，主 `.db` 文件可能只有 4KB 空壳。只复制 `.db` 不复制 `-wal` 等于备份了一个空库——这一点在做加密落库验证时被实际踩到，故在此明示。
 - 回滚代码：checkout 上一版本 tag/commit，二进制与数据库文件一起回退；migration 只增不改，旧代码兼容新库的风险限于新增表/列（当前无此类变更）。
 
 ## 未实现（如实列出）

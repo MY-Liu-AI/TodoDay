@@ -40,6 +40,11 @@ func mapStoreError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "not_found", "资源不存在")
 	case errors.Is(err, store.ErrNotMember):
 		writeError(w, http.StatusForbidden, "forbidden", "无权访问该工作区")
+	// 助手配置的冲突不带 task 字段：它不是任务，写出去会把客户端引偏。
+	case errors.Is(err, store.ErrConfigConflict):
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error": "conflict", "message": "配置已被其他地方修改，请刷新后重试",
+		})
 	case errors.As(err, &ce):
 		writeJSON(w, http.StatusConflict, map[string]any{
 			"error": "conflict", "message": "数据已被其他设备修改", "task": ce.Current,

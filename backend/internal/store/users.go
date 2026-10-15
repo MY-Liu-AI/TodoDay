@@ -10,11 +10,11 @@ import (
 
 // Sentinel errors mapped by the API layer to HTTP status codes.
 var (
-	ErrNotFound       = errors.New("not found")
-	ErrConflict       = errors.New("conflict")
-	ErrUsernameTaken  = errors.New("username taken")
-	ErrInvalid        = errors.New("invalid input")
-	ErrNotMember      = errors.New("not a workspace member")
+	ErrNotFound      = errors.New("not found")
+	ErrConflict      = errors.New("conflict")
+	ErrUsernameTaken = errors.New("username taken")
+	ErrInvalid       = errors.New("invalid input")
+	ErrNotMember     = errors.New("not a workspace member")
 )
 
 type User struct {

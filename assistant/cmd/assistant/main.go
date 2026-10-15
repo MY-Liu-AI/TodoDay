@@ -2,6 +2,10 @@
 //
 // 走长连接（WebSocket）而不是接收 URL 回调：不需要公网 HTTPS、不需要反向
 // 代理、消息是明文 JSON 不需要加解密。代价是进程必须常驻并自行重连。
+//
+// 配置来源分两层：环境变量给出「怎么连后端」，机器人与 AI 的凭据则优先
+// 从后端取（网页设置页填的），环境变量只作兜底。重连时会重新取一次，
+// 所以网页上改配置不用重启进程。
 package main
 
 import (
@@ -63,12 +67,16 @@ func main() {
 	}
 	log.Printf("已连接 %s，工作区 %d，时区 %s", cfg.APIBase, cfg.WorkspaceID, loc)
 
+	// 第一次解析凭据：后端优先，环境变量兜底。
+	creds := resolveCredentials(loginCtx, cfg, todo)
+	log.Printf("凭据来源：%s", creds.Source)
+
 	var kimi *parse.Kimi
-	if cfg.KimiEnabled() {
-		kimi = parse.NewKimi(cfg.KimiKey, cfg.KimiBase, cfg.Model, cfg.ParseTimeout)
-		log.Printf("AI 解析已启用：%s @ %s", cfg.Model, cfg.KimiBase)
+	if creds.KimiKey != "" {
+		kimi = parse.NewKimi(creds.KimiKey, creds.KimiBase, creds.Model, cfg.ParseTimeout)
+		log.Printf("AI 解析已启用：%s @ %s", creds.Model, creds.KimiBase)
 	} else {
-		log.Printf("未配置 KIMI_API_KEY，全部使用规则解析")
+		log.Printf("未配置 Kimi 密钥，全部使用规则解析")
 	}
 	parser := parse.NewParser(kimi, loc)
 
@@ -79,19 +87,53 @@ func main() {
 		return
 	}
 
+	// 两边都没给机器人凭据，连都连不上，直接说清楚该去哪配。
+	if creds.BotID == "" || creds.BotSecret == "" {
+		log.Fatalf("没有可用的机器人凭据：请在网页「设置」页填写 BotID 与 Secret，" +
+			"或设置环境变量 WECOM_BOT_ID / WECOM_BOT_SECRET")
+	}
+
 	// 长连接客户端既负责收消息，也负责回执（回复要带回 req_id）。
-	client := aibot.NewClient(cfg.BotID, cfg.BotSecret, cfg.WSURL, nil)
-	handler := bot.New(parser, todo, client, cfg.KimiEnabled())
+	client := aibot.NewClient(creds.BotID, creds.BotSecret, cfg.WSURL, nil)
+	// 每次重连前重新从后端取凭据：网页上改了配置，重连就生效。
+	client.SetCredentialSource(func(ctx context.Context) (string, string, error) {
+		c := resolveCredentials(ctx, cfg, todo)
+		return c.BotID, c.BotSecret, nil
+	})
+	handler := bot.New(parser, todo, client, kimi != nil)
 	client.SetCallback(&botCallback{handler: handler})
 
 	// 健康检查端口。长连接模式下它不是消息入口，仅供探活使用。
 	go healthServer(ctx, cfg.Addr)
 
-	log.Printf("正在连接企业微信长连接 %s（BotID=%s）", cfg.WSURL, cfg.BotID)
+	log.Printf("正在连接企业微信长连接 %s（BotID=%s）", cfg.WSURL, creds.BotID)
 	if err := client.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		log.Fatalf("长连接运行结束：%v", err)
 	}
 	log.Printf("已退出")
+}
+
+// resolveCredentials 从后端取凭据并与环境变量合并。
+// 后端 404（未配置）或出错都退回环境变量，不让一次网络抖动打断服务。
+func resolveCredentials(ctx context.Context, cfg *config.Config, todo *todoclient.Client) config.Credentials {
+	remote, err := todo.FetchCredentials(ctx)
+	switch {
+	case err == nil:
+		return cfg.Resolve(&config.RemoteCredentials{
+			Enabled:    remote.Enabled,
+			BotID:      remote.BotID,
+			BotSecret:  remote.BotSecret,
+			KimiAPIKey: remote.KimiAPIKey,
+			KimiBase:   remote.KimiBase,
+			KimiModel:  remote.KimiModel,
+		})
+	case errors.Is(err, todoclient.ErrNotConfigured):
+		// 正常情况：用户还没在网页上配，走环境变量。
+		return cfg.Resolve(nil)
+	default:
+		log.Printf("从后端读取凭据失败，改用环境变量：%v", err)
+		return cfg.Resolve(nil)
+	}
 }
 
 // botCallback 把长连接的回调转给编排层。

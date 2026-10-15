@@ -42,9 +42,10 @@ import Stats from "./components/Stats.vue";
 import TaskDialog from "./components/TaskDialog.vue";
 import AuthView from "./components/AuthView.vue";
 import FocusView from "./components/FocusView.vue";
+import SettingsView from "./components/SettingsView.vue";
 import { fs, restore as restoreFocus, fmtClock } from "./focus";
 
-const page = ref<"tasks" | "focus" | "stats">("tasks");
+const page = ref<"tasks" | "focus" | "stats" | "settings">("tasks");
 const mode = ref<"list" | "calendar">("calendar");
 const filter = ref("all");
 const group = ref("");
@@ -91,6 +92,16 @@ const pc = computed(() =>
 const open = computed(() => st.items.filter((i) => !i.done).length);
 const groups = computed(() => Array.from(new Set(st.items.map((i) => i.g))).filter(Boolean));
 const parsed = computed(() => parseInput(draft.value));
+
+/* 页头文案。四个页面各一组，用查表而不是继续叠三元 ——
+   再嵌套一层就该看不懂了。 */
+const PAGE_META: Record<string, { overline: string; title: string; subtitle: string }> = {
+  tasks: { overline: "PLANNER", title: C.myTasks, subtitle: C.subtitle },
+  focus: { overline: "FOCUS", title: C.focus, subtitle: C.focusSubtitle },
+  stats: { overline: "INSIGHTS", title: C.insights, subtitle: C.statsSubtitle },
+  settings: { overline: "SETTINGS", title: C.settings, subtitle: C.settingsSubtitle },
+};
+const meta = computed(() => PAGE_META[page.value] ?? PAGE_META.tasks);
 
 function toggle(i: Item) {
   toggleTask(i);
@@ -265,6 +276,10 @@ watch(
           <Icon name="stats" />
           {{ C.insights }}
         </button>
+        <button :class="page === 'settings' ? 'is-active' : ''" @click="page = 'settings'">
+          <Icon name="gear" />
+          {{ C.settings }}
+        </button>
       </nav>
       <div class="group-navigation">
         <span class="nav-caption">{{ C.projects }}</span>
@@ -303,11 +318,15 @@ watch(
     <main id="workspace" class="planner-workspace">
       <header class="workspace-header">
         <div>
-          <div class="overline">PERSONAL / {{ page === "tasks" ? "PLANNER" : page === "focus" ? "FOCUS" : "INSIGHTS" }}</div>
-          <h1>{{ page === "tasks" ? C.myTasks : page === "focus" ? C.focus : C.insights }}</h1>
-          <p>{{ page === "tasks" ? C.subtitle : page === "focus" ? C.focusSubtitle : C.statsSubtitle }}</p>
+          <div class="overline">PERSONAL / {{ meta.overline }}</div>
+          <h1>{{ meta.title }}</h1>
+          <p>{{ meta.subtitle }}</p>
         </div>
-        <button v-if="page !== 'focus'" class="primary-button new-task" @click="newTask(mode === 'calendar' ? calendarDay : daySel)">
+        <button
+          v-if="page === 'tasks'"
+          class="primary-button new-task"
+          @click="newTask(mode === 'calendar' ? calendarDay : daySel)"
+        >
           <Icon name="plus" />
           {{ C.newTask }}
         </button>
@@ -479,6 +498,7 @@ watch(
         </div>
       </template>
       <FocusView v-else-if="page === 'focus'" />
+      <SettingsView v-else-if="page === 'settings'" />
       <div v-else class="insights-layout">
         <section>
           <p class="history-note">{{ C.historyNote }}</p>

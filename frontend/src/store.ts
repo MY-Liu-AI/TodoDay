@@ -45,6 +45,32 @@ export interface WorkspaceInfo {
   role?: string;
 }
 
+/* 助手配置的掩码视图。服务端只回「是否已设置」，永不回传密钥本身，
+   所以这里没有任何存密钥的字段 —— 前端也就无从泄漏。 */
+export interface AssistantConfigView {
+  configured: boolean;
+  enabled: boolean;
+  botId: string;
+  botSecretSet: boolean;
+  kimiApiKeySet: boolean;
+  kimiBase: string;
+  kimiModel: string;
+  version: number;
+  encryptionAvailable: boolean;
+}
+
+/* 保存时的入参。密钥字段留空/省略表示「保留原值」，
+   这样前端不需要（也不应该）回显已存的密钥。 */
+export interface AssistantConfigInput {
+  enabled: boolean;
+  botId: string;
+  botSecret?: string;
+  kimiApiKey?: string;
+  kimiBase: string;
+  kimiModel: string;
+  version: number;
+}
+
 const SORT_KEY = "todo-day-sort";
 const LEGACY_IMPORTED_KEY = "todo-day-imported";
 
@@ -77,6 +103,9 @@ export const st = reactive({
   statsLoaded: false,
   // 本地旧数据导入（必须用户明确同意，绝不静默上传）。
   importPrompt: null as { items: unknown[]; count: number } | null,
+  // 助手配置的掩码视图。密钥不在其中，故也不必担心持久化泄漏。
+  assistant: null as AssistantConfigView | null,
+  assistantLoading: false,
 });
 
 let noticeTimer = 0;
@@ -189,7 +218,8 @@ export async function logout() {
   }
 }
 
-/* 其他模块（如番茄专注）在登出时需要清自己的状态；避免循环 import，用回调注册。 */
+/* 其他模块（如番茄专注、助手配置）在登出时需要清自己的状态；
+   避免循环 import，用回调注册。 */
 const onLogout: (() => void)[] = [];
 export function registerLogoutHook(fn: () => void) {
   onLogout.push(fn);
@@ -469,6 +499,60 @@ export function skipImport() {
     /* ignore */
   }
 }
+
+/* ── 助手配置（企业微信机器人 + AI 凭证） ─────────────────────────────── */
+
+export async function loadAssistantConfig() {
+  if (!st.workspace) return;
+  st.assistantLoading = true;
+  try {
+    st.assistant = await api<AssistantConfigView>(wsPath("/assistant"));
+  } catch (e) {
+    // 读不到就保持 null，让设置页显示「读取失败」并给重试入口。
+    st.assistant = null;
+    fail(e, C.assistantLoadFailed);
+  } finally {
+    st.assistantLoading = false;
+  }
+}
+
+export async function saveAssistantConfig(input: AssistantConfigInput) {
+  if (!st.workspace) return false;
+  st.assistantLoading = true;
+  try {
+    const view = await api<AssistantConfigView>(wsPath("/assistant"), {
+      method: "PUT",
+      body: input,
+    });
+    // 服务端回的是权威值（含递增后的 version），据它刷新本地掩码视图。
+    st.assistant = view;
+    notify(C.assistantSaved);
+    return true;
+  } catch (e) {
+    if (e instanceof ApiError && e.code === "encryption_unavailable") {
+      notify(C.assistantEncryptionMissing, "error");
+      return false;
+    }
+    if (e instanceof ApiError && e.code === "decrypt_failed") {
+      notify(C.assistantDecryptFailed, "error");
+      return false;
+    }
+    if (e instanceof ApiError && e.status === 403) {
+      notify(C.assistantOwnerOnly, "error");
+      return false;
+    }
+    fail(e, C.assistantSaveFailed);
+    return false;
+  } finally {
+    st.assistantLoading = false;
+  }
+}
+
+export function clearAssistantConfig() {
+  st.assistant = null;
+  st.assistantLoading = false;
+}
+registerLogoutHook(clearAssistantConfig);
 
 /* ── 共享的错误处理 ───────────────────────────────────────────────────── */
 

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"tododay/internal/secretbox"
 	"tododay/internal/store"
 )
 
@@ -19,6 +20,7 @@ type testEnv struct {
 	t   *testing.T
 	srv *httptest.Server
 	cj  map[string]string
+	s   *Server
 }
 
 func newTestEnv(t *testing.T) *testEnv {
@@ -32,10 +34,25 @@ func newTestEnv(t *testing.T) *testEnv {
 	}
 	s := NewServer(st, "")
 	s.limiter = newLoginLimiter(1<<20, time.Minute) // tests: no practical auth throttle
-	env := &testEnv{t: t, srv: httptest.NewServer(s.Handler()), cj: map[string]string{}}
+	env := &testEnv{t: t, srv: httptest.NewServer(s.Handler()), cj: map[string]string{}, s: s}
 	t.Cleanup(env.srv.Close)
 	return env
 }
+
+// withEncryption 给测试服务器装上一把固定主密钥，让保存密钥的路径可用。
+// 直接赋字段是刻意的：测试与实现在同一个包内，这与既有的
+// `s.limiter = ...` 覆盖做法一致。
+func (e *testEnv) withEncryption(t *testing.T) {
+	t.Helper()
+	box, err := secretbox.FromKey(testConfigKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.s.box = box
+}
+
+// testConfigKey 是测试专用的 32 字节 base64 主密钥。不是真实密钥。
+const testConfigKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
 
 func (e *testEnv) do(method, path string, body any) (*http.Response, map[string]any) {
 	e.t.Helper()
@@ -311,7 +328,7 @@ func TestImportDedupesAndValidates(t *testing.T) {
 			{"t": "旧任务A", "p": 1, "due": "2026-10-01", "g": "工作", "done": true, "at": 1759300000000},
 			{"t": "旧任务A", "p": 1, "due": "2026-10-01", "g": "工作"}, // payload-internal duplicate
 			{"t": "旧任务B", "p": 3, "due": "", "g": "生活"},
-			{"t": "   ", "p": 3, "due": "", "g": "生活"},              // invalid, rejected before store
+			{"t": "   ", "p": 3, "due": "", "g": "生活"},           // invalid, rejected before store
 			{"t": "坏日期", "p": 3, "due": "2026-13-40", "g": "生活"}, // invalid date
 		},
 	})

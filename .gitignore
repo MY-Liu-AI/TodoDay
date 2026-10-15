@@ -10,3 +10,4 @@ backend/server
 assistant/assistant
 assistant/assistant.exe
 assistant/.env
+backend/.dev-config-key

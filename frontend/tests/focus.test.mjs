@@ -41,7 +41,7 @@ test("stats view reads today/week/month from the server model", () => {
 });
 
 test("focus page is wired into the sidebar between plan and insights", () => {
-  assert.match(app, /ref<"tasks" \| "focus" \| "stats">\("tasks"\)/);
+  assert.match(app, /ref<"tasks" \| "focus" \| "stats" \| "settings">\("tasks"\)/);
   const plan = app.indexOf("page = 'tasks'\"");
   const focusNav = app.indexOf("page = 'focus'\"");
   const stats = app.indexOf("@click=\"goStats\"");

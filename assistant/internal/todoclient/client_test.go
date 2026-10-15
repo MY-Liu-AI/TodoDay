@@ -203,6 +203,120 @@ func TestWorkspaceTimezoneRejectsForeignWorkspace(t *testing.T) {
 	}
 }
 
+/* ── FetchCredentials：网页配置流向助手的通道 ───────────────────────── */
+
+// credBackend 在 fakeBackend 之上加一个 credentials 端点。
+type credBackend struct {
+	*fakeBackend
+	credStatus int
+	credBody   string
+	credCalls  int32
+	credAuth   int32 // 前 N 次返回 401
+}
+
+func (f *credBackend) handler(t *testing.T) http.HandlerFunc {
+	base := f.fakeBackend.handler(t)
+	return func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/assistant/credentials") {
+			atomic.AddInt32(&f.credCalls, 1)
+			if n := atomic.LoadInt32(&f.credAuth); n > 0 {
+				atomic.AddInt32(&f.credAuth, -1)
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
+				return
+			}
+			w.WriteHeader(f.credStatus)
+			_, _ = w.Write([]byte(f.credBody))
+			return
+		}
+		base(w, r)
+	}
+}
+
+func newCredFake(t *testing.T, f *credBackend) *Client {
+	t.Helper()
+	srv := httptest.NewServer(f.handler(t))
+	t.Cleanup(srv.Close)
+	c, err := New(srv.URL, "bot", "password123", 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Login(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+func TestFetchCredentialsSuccess(t *testing.T) {
+	f := &credBackend{
+		fakeBackend: &fakeBackend{},
+		credStatus:  http.StatusOK,
+		credBody:    `{"enabled":true,"botId":"B1","botSecret":"S1","kimiApiKey":"K1","kimiBase":"https://x/v1","kimiModel":"m"}`,
+	}
+	c := newCredFake(t, f)
+	got, err := c.FetchCredentials(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.BotID != "B1" || got.BotSecret != "S1" || got.KimiAPIKey != "K1" || !got.Enabled {
+		t.Fatalf("凭据解析不正确：%+v", got)
+	}
+}
+
+// 404 必须映射成 ErrNotConfigured：调用方据此回落到环境变量，
+// 而不是把「还没配」当成故障。
+func TestFetchCredentialsNotConfigured(t *testing.T) {
+	f := &credBackend{
+		fakeBackend: &fakeBackend{},
+		credStatus:  http.StatusNotFound,
+		credBody:    `{"error":"not_found","message":"尚未配置助手"}`,
+	}
+	c := newCredFake(t, f)
+	_, err := c.FetchCredentials(context.Background())
+	if !errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("404 应映射为 ErrNotConfigured，得到 %v", err)
+	}
+}
+
+// 会话过期自动重登再试。
+func TestFetchCredentialsReloginsOn401(t *testing.T) {
+	f := &credBackend{
+		fakeBackend: &fakeBackend{},
+		credStatus:  http.StatusOK,
+		credBody:    `{"enabled":true,"botId":"B1","botSecret":"S1"}`,
+		credAuth:    1,
+	}
+	c := newCredFake(t, f)
+	before := atomic.LoadInt32(&f.loginCalls)
+	got, err := c.FetchCredentials(context.Background())
+	if err != nil {
+		t.Fatalf("自动重登后应成功：%v", err)
+	}
+	if got.BotID != "B1" {
+		t.Fatalf("重登后应拿到凭据：%+v", got)
+	}
+	if atomic.LoadInt32(&f.loginCalls) != before+1 {
+		t.Fatal("应当自动重登一次")
+	}
+	if atomic.LoadInt32(&f.credCalls) != 2 {
+		t.Fatal("应当重试一次取凭据")
+	}
+}
+
+// 非 owner 取凭据会被后端 403：要归类成权限错误，让日志指向排查方向。
+func TestFetchCredentialsForbidden(t *testing.T) {
+	f := &credBackend{
+		fakeBackend: &fakeBackend{},
+		credStatus:  http.StatusForbidden,
+		credBody:    `{"error":"forbidden","message":"只有工作区所有者可以修改助手配置"}`,
+	}
+	c := newCredFake(t, f)
+	_, err := c.FetchCredentials(context.Background())
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("403 应归类为权限错误，得到 %v", err)
+	}
+}
+
 func TestUnreachableBackend(t *testing.T) {
 	// 端口上没有任何服务。
 	c, err := New("http://127.0.0.1:1", "bot", "pw", 1)
