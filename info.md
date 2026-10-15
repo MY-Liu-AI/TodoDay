@@ -66,8 +66,19 @@ npm run build      # 产出 frontend/dist
 后端：
 ```
 cd backend
-go test ./...      # API 集成测试 + migration 回滚测试
-go run ./cmd/server -addr :8080 -db tododay.db -static ../frontend/dist
+go test ./...                          # API 集成测试 + migration 回滚测试
+go run ./cmd/server -gen-config-key    # 生成一把助手凭据的主密钥（只需一次）
+TODO_CONFIG_KEY=<上一步的输出> \
+  go run ./cmd/server -addr :8080 -db tododay.db -static ../frontend/dist
+```
+
+`TODO_CONFIG_KEY` 是设置页加密保存机器人 Secret 与 Kimi Key 用的主密钥。**不设也能启动**，但设置页会拒绝保存密钥（只允许改非密钥项）。它丢失后已存的凭据无法恢复，需要重新填写，所以务必留好备份。
+
+助手进程（可选）：
+```
+cd assistant
+TODO_USERNAME=<账号> TODO_PASSWORD=<密码> TODO_WORKSPACE_ID=<工作区ID> \
+  go run ./cmd/assistant               # 机器人凭据在网页设置页填，或走环境变量兜底
 ```
 
 单进程即可运行：服务端托管前端构建产物并代理同源 API。浏览器实测与设计依据见仓库 pipeline/runs/todo-day。此改造不包含部署、通知或附件存储。
