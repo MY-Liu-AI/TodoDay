@@ -51,6 +51,19 @@
 
 ### 2026-10-15
 
+**企业微信助手改用智能机器人长连接**
+
+- 接入方式从「自建应用接收消息回调」换成**智能机器人 + WebSocket 长连接**：
+  不再需要公网 HTTPS、反向代理与加解密，消息是明文 JSON
+- 旧的 `internal/wecom`（XML 回调 + AES + CorpID 校验）整个删除，
+  新增 `internal/aibot`（订阅、30 秒心跳、断线退避重连、帧解析、回复）
+- 配置从五件套（CorpID/AgentID/Secret/Token/AESKey）换成 BotID + Secret
+- 引入 `github.com/gorilla/websocket`：模块不再是「仅标准库」
+- 回复改为绑定回调的 `req_id`（长连接回复的是「某次回调」而不是「某个人」）
+- 实测：真实连上 `wss://openws.work.weixin.qq.com`，用假凭据返回
+  `errcode 853000 invalid bot_id or secret` —— 说明握手、帧结构与订阅命令
+  均正确（服务端看懂了我们发的内容才可能具体地拒绝凭据）
+
 **新增企业微信 AI 助手**
 
 - 新目录 `assistant/`：在企业微信里说一句计划，助手把它记进任务列表

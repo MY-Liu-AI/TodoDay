@@ -13,15 +13,14 @@ import (
 )
 
 type Config struct {
-	// 本服务
+	// 本服务（长连接模式下只用于健康检查，不再是回调入口）
 	Addr string
 
-	// 企业微信自建应用五件套
-	CorpID         string
-	AgentID        string
-	Secret         string
-	Token          string
-	EncodingAESKey string
+	// 企业微信智能机器人（长连接模式）：BotID + Secret。
+	// 注意这与「接收 URL」模式的 Token + EncodingAESKey 是两套凭据，不能混用。
+	BotID     string
+	BotSecret string
+	WSURL     string
 
 	// TodoDay 后端
 	APIBase     string
@@ -38,11 +37,8 @@ type Config struct {
 
 // required 列出必填键，缺失时按此顺序报出。
 var required = []string{
-	"WECOM_CORP_ID",
-	"WECOM_AGENT_ID",
-	"WECOM_SECRET",
-	"WECOM_TOKEN",
-	"WECOM_ENCODING_AES_KEY",
+	"WECOM_BOT_ID",
+	"WECOM_BOT_SECRET",
 	"TODO_USERNAME",
 	"TODO_PASSWORD",
 	"TODO_WORKSPACE_ID",
@@ -68,15 +64,15 @@ func firstOf(keys ...string) string {
 // Load 读取配置。返回的错误会列出所有缺失或非法的键名。
 func Load() (*Config, error) {
 	c := &Config{
-		Addr:           env("ASSISTANT_ADDR", ":8090"),
-		CorpID:         env("WECOM_CORP_ID", ""),
-		AgentID:        env("WECOM_AGENT_ID", ""),
-		Secret:         env("WECOM_SECRET", ""),
-		Token:          env("WECOM_TOKEN", ""),
-		EncodingAESKey: env("WECOM_ENCODING_AES_KEY", ""),
-		APIBase:        strings.TrimRight(env("TODO_API_BASE", "http://127.0.0.1:8080"), "/"),
-		Username:       env("TODO_USERNAME", ""),
-		Password:       env("TODO_PASSWORD", ""),
+		Addr:      env("ASSISTANT_ADDR", ":8090"),
+		BotID:     env("WECOM_BOT_ID", ""),
+		BotSecret: env("WECOM_BOT_SECRET", ""),
+		WSURL:     env("WECOM_BOT_WS_URL", "wss://openws.work.weixin.qq.com"),
+
+		APIBase:  strings.TrimRight(env("TODO_API_BASE", "http://127.0.0.1:8080"), "/"),
+		Username: env("TODO_USERNAME", ""),
+		Password: env("TODO_PASSWORD", ""),
+
 		// 兼容 MOONSHOT_API_KEY：两者都是 Moonshot 的密钥，取先设置的那个。
 		KimiKey:  firstOf("KIMI_API_KEY", "MOONSHOT_API_KEY"),
 		KimiBase: strings.TrimRight(env("KIMI_BASE_URL", "https://api.moonshot.cn/v1"), "/"),
@@ -100,8 +96,10 @@ func Load() (*Config, error) {
 	}
 	c.WorkspaceID = wid
 
-	if len(c.EncodingAESKey) != 43 {
-		return nil, fmt.Errorf("WECOM_ENCODING_AES_KEY 必须是 43 个字符，当前 %d 个", len(c.EncodingAESKey))
+	// 长连接地址必须是 wss:// 开头：ws:// 只在本地调试时才有意义，
+	// 这里允许，以便对着测试服务器跑。
+	if !strings.HasPrefix(c.WSURL, "wss://") && !strings.HasPrefix(c.WSURL, "ws://") {
+		return nil, fmt.Errorf("WECOM_BOT_WS_URL 必须以 wss:// 或 ws:// 开头，当前值 %q", c.WSURL)
 	}
 
 	d, err := time.ParseDuration(env("PARSE_TIMEOUT", "8s"))

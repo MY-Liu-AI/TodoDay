@@ -47,17 +47,18 @@ func (f *fakeRecorder) CreatePlan(_ context.Context, plan parse.Plan, clientID s
 
 type fakeSender struct {
 	mu   sync.Mutex
-	sent []struct{ To, Text string }
+	sent []struct{ ReqID, Text string }
 	err  error
 }
 
-func (f *fakeSender) SendText(_ context.Context, to, content string) error {
+// Reply 是长连接的回复：回给「某一次回调」而不是某个人，所以断言的是 reqID。
+func (f *fakeSender) Reply(_ context.Context, reqID, content string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.err != nil {
 		return f.err
 	}
-	f.sent = append(f.sent, struct{ To, Text string }{to, content})
+	f.sent = append(f.sent, struct{ ReqID, Text string }{reqID, content})
 	return nil
 }
 
@@ -71,7 +72,7 @@ func TestHandleRecordsTaskAndReplies(t *testing.T) {
 	s := &fakeSender{}
 	h := newTestHandler(p, r, s, true)
 
-	h.Handle(context.Background(), Incoming{FromUser: "ZhangSan", Text: "明天 交周报 #工作 !!!", MsgID: "1234"})
+	h.Handle(context.Background(), Incoming{FromUser: "ZhangSan", Text: "明天 交周报 #工作 !!!", MsgID: "1234", ReqID: "req-1"})
 
 	if len(r.created) != 1 {
 		t.Fatalf("应当建 1 条任务，实际 %d", len(r.created))
@@ -83,8 +84,12 @@ func TestHandleRecordsTaskAndReplies(t *testing.T) {
 	if r.clientID[0] != "wx_1234" {
 		t.Fatalf("clientId 不正确：%q", r.clientID[0])
 	}
-	if len(s.sent) != 1 || s.sent[0].To != "ZhangSan" {
-		t.Fatalf("回执未正确发送：%+v", s.sent)
+	if len(s.sent) != 1 {
+		t.Fatalf("回执未发送：%+v", s.sent)
+	}
+	// 回复必须带回回调的 req_id，否则长连接上发不出去。
+	if s.sent[0].ReqID != "req-1" {
+		t.Fatalf("req_id 未透传：%q", s.sent[0].ReqID)
 	}
 	// 回执里要能看出记了什么、什么时候、哪个分组、什么优先级。
 	for _, want := range []string{"交周报", "2026-10-16", "工作", "高优先级", "已记录"} {
@@ -94,14 +99,14 @@ func TestHandleRecordsTaskAndReplies(t *testing.T) {
 	}
 }
 
-// 企业微信超时后会重投同一条消息：不能重复建任务，也不能重复回复。
+// 企业微信会重投同一条消息：不能重复建任务，也不能重复回复。
 func TestHandleDeduplicatesRetries(t *testing.T) {
 	p := &fakeParser{plan: parse.Plan{Title: "x", Priority: 3, Group: "生活"}, source: parse.SourceKimi}
 	r := &fakeRecorder{}
 	s := &fakeSender{}
 	h := newTestHandler(p, r, s, true)
 
-	msg := Incoming{FromUser: "ZhangSan", Text: "买牛奶", MsgID: "same-id"}
+	msg := Incoming{FromUser: "ZhangSan", Text: "买牛奶", MsgID: "same-id", ReqID: "req-1"}
 	h.Handle(context.Background(), msg)
 	h.Handle(context.Background(), msg)
 	h.Handle(context.Background(), msg)
@@ -124,7 +129,7 @@ func TestHandleDeduplicatesWithoutMsgID(t *testing.T) {
 	s := &fakeSender{}
 	h := newTestHandler(p, r, s, true)
 
-	msg := Incoming{FromUser: "ZhangSan", Text: "买牛奶"}
+	msg := Incoming{FromUser: "ZhangSan", Text: "买牛奶", ReqID: "req-1"}
 	h.Handle(context.Background(), msg)
 	h.Handle(context.Background(), msg)
 	if len(r.created) != 1 {
@@ -138,7 +143,7 @@ func TestHandleRejectsEmptyText(t *testing.T) {
 	s := &fakeSender{}
 	h := newTestHandler(p, r, s, false)
 
-	h.Handle(context.Background(), Incoming{FromUser: "ZhangSan", Text: "   ", MsgID: "1"})
+	h.Handle(context.Background(), Incoming{FromUser: "ZhangSan", Text: "   ", MsgID: "1", ReqID: "req-1"})
 
 	if len(r.created) != 0 {
 		t.Fatal("空消息不该建任务")
@@ -158,7 +163,7 @@ func TestHandleRejectsUnparseableText(t *testing.T) {
 	s := &fakeSender{}
 	h := newTestHandler(p, r, s, false)
 
-	h.Handle(context.Background(), Incoming{FromUser: "ZhangSan", Text: "。。。", MsgID: "2"})
+	h.Handle(context.Background(), Incoming{FromUser: "ZhangSan", Text: "。。。", MsgID: "2", ReqID: "req-2"})
 
 	if len(r.created) != 0 {
 		t.Fatal("没解析出内容时不该建任务")
@@ -193,7 +198,7 @@ func TestHandleReportsRecordFailure(t *testing.T) {
 	s := &fakeSender{}
 	h := newTestHandler(p, r, s, true)
 
-	h.Handle(context.Background(), Incoming{FromUser: "ZhangSan", Text: "买牛奶", MsgID: "3"})
+	h.Handle(context.Background(), Incoming{FromUser: "ZhangSan", Text: "买牛奶", MsgID: "3", ReqID: "req-3"})
 
 	if len(s.sent) != 1 {
 		t.Fatal("记录失败时也应当回复，否则用户以为没收到")
@@ -210,7 +215,7 @@ func TestHandleNotesRuleFallbackWhenAIEnabled(t *testing.T) {
 	s := &fakeSender{}
 	h := newTestHandler(p, r, s, true)
 
-	h.Handle(context.Background(), Incoming{FromUser: "ZhangSan", Text: "买牛奶", MsgID: "4"})
+	h.Handle(context.Background(), Incoming{FromUser: "ZhangSan", Text: "买牛奶", MsgID: "4", ReqID: "req-4"})
 	if len(s.sent) != 1 || !strings.Contains(s.sent[0].Text, "按关键词理解") {
 		t.Fatalf("应当说明走了降级路径：%+v", s.sent)
 	}
@@ -223,7 +228,7 @@ func TestHandleOmitsFallbackNoteWhenAIOff(t *testing.T) {
 	s := &fakeSender{}
 	h := newTestHandler(p, r, s, false)
 
-	h.Handle(context.Background(), Incoming{FromUser: "ZhangSan", Text: "买牛奶", MsgID: "5"})
+	h.Handle(context.Background(), Incoming{FromUser: "ZhangSan", Text: "买牛奶", MsgID: "5", ReqID: "req-5"})
 	if strings.Contains(s.sent[0].Text, "按关键词理解") {
 		t.Fatalf("未配置 AI 时不该出现降级说明：%s", s.sent[0].Text)
 	}
@@ -233,10 +238,10 @@ func TestHandleOmitsFallbackNoteWhenAIOff(t *testing.T) {
 func TestSendFailureDoesNotBreak(t *testing.T) {
 	p := &fakeParser{plan: parse.Plan{Title: "x", Priority: 3, Group: "生活"}, source: parse.SourceKimi}
 	r := &fakeRecorder{}
-	s := &fakeSender{err: errors.New("网络不通")}
+	s := &fakeSender{err: errors.New("长连接当前不可用")}
 	h := newTestHandler(p, r, s, true)
 
-	h.Handle(context.Background(), Incoming{FromUser: "ZhangSan", Text: "买牛奶", MsgID: "6"})
+	h.Handle(context.Background(), Incoming{FromUser: "ZhangSan", Text: "买牛奶", MsgID: "6", ReqID: "req-6"})
 	if len(r.created) != 1 {
 		t.Fatal("回执发送失败不应影响任务落库")
 	}

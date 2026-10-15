@@ -1,4 +1,7 @@
-// 助手服务入口：接收企业微信回调 → 解析计划 → 写进 TodoDay → 回复。
+// 助手服务入口：企业微信智能机器人长连接 → 解析计划 → 写进 TodoDay → 回复。
+//
+// 走长连接（WebSocket）而不是接收 URL 回调：不需要公网 HTTPS、不需要反向
+// 代理、消息是明文 JSON 不需要加解密。代价是进程必须常驻并自行重连。
 package main
 
 import (
@@ -8,7 +11,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -19,79 +21,21 @@ import (
 	// 而相对日期的解析依赖工作区时区。
 	_ "time/tzdata"
 
+	"assistant/internal/aibot"
 	"assistant/internal/bot"
 	"assistant/internal/config"
 	"assistant/internal/parse"
 	"assistant/internal/todoclient"
-	"assistant/internal/wecom"
 )
 
-const callbackPath = "/wecom/callback"
-
-// handshakeURL 拼出可直接用 curl 打开的 URL 验证地址。
-//
-// 必须走 url.Values 而不是手工拼字符串：echostr 是 base64，含有 + / =
-// 三种在 query string 里有特殊含义的字符，其中 + 会被解析成空格 ——
-// 手工拼接出来的地址签名必然不匹配，解密也会失败。
-func handshakeURL(addr, path, signature, timestamp, nonce, echoStr string) string {
-	q := url.Values{}
-	q.Set("msg_signature", signature)
-	q.Set("timestamp", timestamp)
-	q.Set("nonce", nonce)
-	q.Set("echostr", echoStr)
-	return fmt.Sprintf("http://localhost%s%s?%s", addr, path, q.Encode())
-}
-
-// runRecordTest 执行一次「解析 → 建任务」，不经过企业微信。
-// 用来在配置回调之前先确认凭据、工作区与解析链路都是通的。
-func runRecordTest(ctx context.Context, parser *parse.Parser, recorder interface {
-	CreatePlan(context.Context, parse.Plan, string) error
-}, text string) error {
-	plan, source := parser.Parse(ctx, text)
-	if strings.TrimSpace(plan.Title) == "" {
-		return fmt.Errorf("没能从 %q 里解析出任务内容", text)
-	}
-	clientID := fmt.Sprintf("manual-%d", time.Now().Unix())
-	if err := recorder.CreatePlan(ctx, plan, clientID); err != nil {
-		return err
-	}
-	log.Printf("已记录：%s ｜ 日期 %s ｜ 分组 %s ｜ 优先级 %d（解析来源：%s）",
-		plan.Title, dueOrNone(plan.Due), plan.Group, plan.Priority, source)
-	return nil
-}
-
-func dueOrNone(due string) string {
-	if due == "" {
-		return "未排期"
-	}
-	return due
-}
-
 func main() {
-	printHandshake := flag.Bool("print-handshake", false,
-		"生成一条可用于本地自测的回调验证 URL 后退出（不需要真实企业微信后台）")
 	recordTest := flag.String("record-test", "",
-		"不走企业微信，直接把这句话按「解析 → 建任务」跑一遍后退出，用于验证配置")
+		"不连企业微信，直接把这句话按「解析 → 建任务」跑一遍后退出，用于验证配置")
 	flag.Parse()
 
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("配置有误：%v", err)
-	}
-
-	aesKey, err := wecom.DecodeAESKey(cfg.EncodingAESKey)
-	if err != nil {
-		log.Fatalf("WECOM_ENCODING_AES_KEY 无法使用：%v", err)
-	}
-
-	if *printHandshake {
-		h := wecom.NewHandler(cfg.CorpID, cfg.Token, aesKey, nil)
-		sig, ts, echo, err := h.VerifyURLForTest("testnonce")
-		if err != nil {
-			log.Fatalf("生成验证参数失败：%v", err)
-		}
-		fmt.Println("curl -i '" + handshakeURL(cfg.Addr, callbackPath, sig, ts, "testnonce", echo) + "'")
-		return
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -135,40 +79,86 @@ func main() {
 		return
 	}
 
-	sender := wecom.NewClient(cfg.CorpID, cfg.Secret, cfg.AgentID)
-	handler := bot.New(parser, todo, sender, cfg.KimiEnabled())
+	// 长连接客户端既负责收消息，也负责回执（回复要带回 req_id）。
+	client := aibot.NewClient(cfg.BotID, cfg.BotSecret, cfg.WSURL, nil)
+	handler := bot.New(parser, todo, client, cfg.KimiEnabled())
+	client.SetCallback(&botCallback{handler: handler})
 
+	// 健康检查端口。长连接模式下它不是消息入口，仅供探活使用。
+	go healthServer(ctx, cfg.Addr)
+
+	log.Printf("正在连接企业微信长连接 %s（BotID=%s）", cfg.WSURL, cfg.BotID)
+	if err := client.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		log.Fatalf("长连接运行结束：%v", err)
+	}
+	log.Printf("已退出")
+}
+
+// botCallback 把长连接的回调转给编排层。
+type botCallback struct {
+	handler *bot.Handler
+}
+
+func (c *botCallback) OnMessage(ctx context.Context, reqID string, body *aibot.InboundBody) {
+	// 非文本消息没有可记录的文本内容，直接忽略（但仍要记日志，
+	// 否则用户发了图片会觉得机器人静默失效）。
+	if !body.IsText() {
+		log.Printf("aibot: 忽略非文本消息 type=%s from=%s", body.MsgType, body.From.UserID)
+		return
+	}
+	c.handler.Handle(ctx, bot.Incoming{
+		FromUser: body.From.UserID,
+		Text:     body.Content(),
+		MsgID:    body.MsgID,
+		ReqID:    reqID,
+	})
+}
+
+func (c *botCallback) OnEvent(ctx context.Context, reqID string, body *aibot.EventBody) {
+	// 进入会话、卡片点击等事件本服务不处理，记一行便于排查。
+	log.Printf("aibot: 忽略事件 type=%s from=%s", body.Event.EventType, body.From.UserID)
+}
+
+// healthServer 提供一个探活端点，便于容器/进程管理器检查存活。
+func healthServer(ctx context.Context, addr string) {
 	mux := http.NewServeMux()
-	mux.Handle(callbackPath, wecom.NewHandler(cfg.CorpID, cfg.Token, aesKey, func(ctx context.Context, m *wecom.Message) {
-		handler.Handle(ctx, bot.Incoming{FromUser: m.FromUserName, Text: m.Content, MsgID: m.MsgID})
-	}))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
-
-	srv := &http.Server{
-		Addr:    cfg.Addr,
-		Handler: mux,
-		// 回调要求快速响应，读超时不能长。
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      10 * time.Second,
-		IdleTimeout:       60 * time.Second,
-	}
-
+	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
-		log.Printf("助手服务监听 %s，回调路径 %s", cfg.Addr, callbackPath)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("服务启动失败：%v", err)
+			log.Printf("健康检查端口启动失败：%v", err)
 		}
 	}()
-
 	<-ctx.Done()
-	log.Printf("收到停止信号，准备退出")
-	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancelShutdown()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Printf("关闭服务时出错：%v", err)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_ = srv.Shutdown(shutdownCtx)
+}
+
+// runRecordTest 执行一次「解析 → 建任务」，不经过企业微信。
+// 用来在配置机器人之前先确认凭据、工作区与解析链路都是通的。
+func runRecordTest(ctx context.Context, parser *parse.Parser, recorder interface {
+	CreatePlan(context.Context, parse.Plan, string) error
+}, text string) error {
+	plan, source := parser.Parse(ctx, text)
+	if strings.TrimSpace(plan.Title) == "" {
+		return fmt.Errorf("没能从 %q 里解析出任务内容", text)
 	}
+	clientID := fmt.Sprintf("manual-%d", time.Now().Unix())
+	if err := recorder.CreatePlan(ctx, plan, clientID); err != nil {
+		return err
+	}
+	log.Printf("已记录：%s ｜ 日期 %s ｜ 分组 %s ｜ 优先级 %d（解析来源：%s）",
+		plan.Title, dueOrNone(plan.Due), plan.Group, plan.Priority, source)
+	return nil
+}
+
+func dueOrNone(due string) string {
+	if due == "" {
+		return "未排期"
+	}
+	return due
 }

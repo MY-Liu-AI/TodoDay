@@ -6,6 +6,8 @@
 
 这是已接入真实后端的完整应用：frontend/ 为 Vue 3 + Vite + TypeScript（页面与原版一致），backend/ 为 Go 1.26 服务端（net/http + 嵌入式 SQLite，WAL）。任务持久化在服务端数据库（users/sessions/workspaces/workspace_members/task_groups/tasks/task_events），支持注册登录、多工作区、乐观并发（version + 409）、幂等创建（client_id）、软删与撤销恢复、服务端排序事务；热力/连续天数/近 7 天统计同源（task_events 按工作区时区聚合）。前端不再有样本注入；localStorage 仅保留排序偏好、主题和「用户明确同意后才执行」的 legacy 导入流程（含 `todo-day-imported` 标记）。不得把前端操作成功当作对象存储或云同步成功——对象存储/上传能力尚未接入，见 FULLSTACK.md 与 DELIVERY.md。
 
+另有可选的 `assistant/`：独立 Go 模块，把企业微信智能机器人里说的计划记进本应用。它走 WebSocket 长连接（BotID + Secret），消息是明文 JSON，**不需要公网地址也不需要加解密**；解析优先用 Kimi，失败退回规则解析；通过 HTTP 调用 backend 的公开 API 写入任务，不直连数据库。它需要自己的凭据与常驻进程，**不随 backend/frontend 一起部署**，键名见 `assistant/.env.example` 与 `assistant/README.md`。
+
 ## 下游 agent 必须遵守
 
 - 用户要求完整应用、账号、多设备持久化或全栈能力时，按 FULLSTACK.md 补齐数据库、身份与服务端授权、API、持久化及故障处理；涉及上传时补齐对象存储。只改视觉时不要擅自创建外部资源。
@@ -16,3 +18,4 @@
 - 分类色是用户指定的日历数据编码，允许青蓝/浅黄/蜜桃/珊瑚/青绿/灰蓝并存；主操作仍只有青绿一色。
 - 构建不等于全栈验收。完成 FULLSTACK.md 的相关验收，并如实列出尚未接入的服务。
 - 发布、付费资源、账号授权、数据迁移另行取得用户授权。不得把开发密钥写入前端代码或 VITE_* 环境变量。
+- 助手的凭据（BotID/Secret）、TodoDay 账号密码与 Kimi 密钥只放在服务端环境变量里；`assistant/.env` 不得提交（`assistant/.env.example` 是模板，可以提交）。不要把真实凭据写进任何文档或测试。

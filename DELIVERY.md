@@ -30,17 +30,24 @@
 - 测试：`npm test`（30 个 node:test：解析/排序/删除恢复/导入校验纯函数、日历网格、热力换算口径、AA 对比度、跨语言分类色、产品元数据、文档契约）；`npm run typecheck` 通过；`npm run build` 通过。
 
 **企业微信 AI 助手（assistant/，独立 Go 模块，2026-10-15 增量）**
-- 独立模块 `assistant`（module `assistant`，**仅标准库**，无第三方依赖），与 `backend/`、`frontend/` 并列；**未改动 backend 与 frontend 任何代码**。
-- 接入方式：企业微信**自建应用的「接收消息」回调**（`/wecom/callback`）。群机器人 webhook 是单向推送、无接收入口，因此不适用。
-- 加解密（`internal/wecom`）：签名 = 四个值字典序排序后 SHA1（GET 用 echostr、POST 用 Encrypt）；AES-256-CBC，IV = 密钥前 16 字节；`EncodingAESKey` 43 字符补 `=` 后 base64 解码为 32 字节；明文结构 `random(16)+len(4,大端)+msg+receiveid`；**PKCS#7 块大小为 32**；`receiveid` 必须等于 CorpID，否则拒绝。
-- 回调处理：GET 验证返回**明文** echostr（不加引号/BOM/换行）；POST 校验签名解密后**立刻回 `success`**，解析与建任务放后台 goroutine，完成后经 `cgi-bin/message/send` 主动推送回执（access_token 缓存，提前 5 分钟失效，42001 自动刷新重试一次）。
-- 解析（`internal/parse`）：优先 Kimi（Moonshot，OpenAI 兼容 `/chat/completions`，function calling 强制结构化输出，system prompt 注入当天日期与工作区时区）；未配置密钥、超时、出错或结果无内容时**自动退回规则解析**并记日志（移植前端 `parseInput`：中英文相对日期、`M月D日`/`M/D`、`#分组`、`!!!`/`!!`/`!` 三档优先级、默认分组规则一致）。
+- 独立模块 `assistant`（module `assistant`），与 `backend/`、`frontend/` 并列；**未改动 backend 与 frontend 任何代码**。
+- 依赖：仅 `github.com/gorilla/websocket`（长连接客户端）。**该模块不再是「仅标准库」**——Go 标准库没有 WebSocket 客户端。因本机 `GOPROXY=off`，版本锁定为模块缓存中已有 `.zip` 的伪版本 `v1.5.4-0.20250319132907-e064f32e3674`（默认解析会挑到只有 `.mod` 的 v1.5.3 而失败）。
+- 接入方式：**智能机器人 + WebSocket 长连接**（`wss://openws.work.weixin.qq.com`，由本服务主动连出）。凭据为 **BotID + Secret**。
+  - 选它的理由：不需要公网 HTTPS、不需要反向代理、消息是明文 JSON **不需要加解密**。代价是进程必须常驻、每 30 秒心跳、断线自行退避重连。
+  - 群机器人 webhook 是单向推送、无接收入口，不适用；「接收 URL」模式需要公网地址与 AES 加解密，本项目未采用。
+- 协议实现（`internal/aibot`）：订阅 `aibot_subscribe`（body 带 `bot_id`/`secret`）→ 心跳 `ping`（30 秒，同时发协议层 ping 帧）→ 入站 `aibot_msg_callback` / `aibot_event_callback` → 回复 `aibot_respond_msg`。
+  - **回复必须透传回调的 `headers.req_id`**：长连接的回复是「回给某一次回调」而非「回给某个人」，丢了就发不出去。`bot.Sender` 接口因此是 `Reply(ctx, reqID, content)`。
+  - 取回调时**先释放锁再调用**，否则回调里调用 `Reply` 会自锁死（`write` 全程持锁）。
+  - 断线退避 3 秒起、上限 60 秒；同一机器人只允许一条有效长连接，新连接会踢掉旧的，故多实例会互踢（已在文档中列为未支持项）。
+- 解析（`internal/parse`）：优先 Kimi（Moonshot，OpenAI 兼容 `/chat/completions`，function calling 强制结构化输出，system prompt 注入当天日期与工作区时区）；未配置密钥、超时、出错或结果无内容时**自动退回规则解析**并记日志（移植前端 `parseInput`：中英文相对日期、`M月D日`/`M/D`、`#分组`、`!!!`/`!!`/`!` 三档优先级，默认分组规则与前端一致）。
 - 数据通路（`internal/todoclient`）：HTTP 调用现有后端 API，复用服务端字段校验、工作区归属校验与 `client_id` 幂等；CSRF 头自动携带；401 自动重登一次并重试；403（配置问题）与 400（内容问题）分类成不同错误，回执文案指向不同排查方向。
-- 幂等：企业微信 `MsgId` 直接作为 `clientId`（前缀 `wx_`），重投不会产生重复任务；进程内另有 `MsgId` 去重缓存（上限 2000），避免重跑解析与重复回复。
-- 配置：全部经环境变量，启动时校验必填项并**只打印缺失的键名**（不打印值）。键名与默认值见 `assistant/.env.example` 与 `assistant/README.md`（`ASSISTANT_ADDR`、`WECOM_CORP_ID`/`WECOM_AGENT_ID`/`WECOM_SECRET`/`WECOM_TOKEN`/`WECOM_ENCODING_AES_KEY`、`TODO_API_BASE`/`TODO_USERNAME`/`TODO_PASSWORD`/`TODO_WORKSPACE_ID`、`KIMI_API_KEY`（或 `MOONSHOT_API_KEY`）/`KIMI_BASE_URL`/`ASSISTANT_MODEL`/`PARSE_TIMEOUT`）。
-- 测试：`cd assistant && go test ./... -count=1` 全部通过 —— 加解密用**企业微信官方的回调测试参数**做互操作验证（签名与解密都对齐官方，不只是自往返）；回调 `httptest` 端到端（GET 返回明文 echostr、POST 秒回 success 并投递消息、签名错误 403、外来 CorpID 403、非文本忽略）；解析表驱动（含闰年、时区差异、非法日期、AI 越界输出收敛）；编排（重投去重、空消息、记录失败、降级提示、发送失败不影响落库）；配置校验；TodoDay 客户端（401 重登、403/400 分类、不可达）。
-- **未实现**：不含部署（无 Dockerfile/systemd/CI）与内网穿透；不做查询/完成/删除/统计指令（一条消息 = 记一条任务）；固定单工作区，不支持多人绑定；无持久化队列（进程重启会丢未发出的回执，任务本身已落库）；无多轮对话；非文本消息忽略。
-- **尚未验证**：签约、保存回调地址、真实推送需要企业凭据与公网 HTTPS 地址，必须实测一次才算接通；仓库里的测试只覆盖加解密与编排逻辑。
+- 幂等：`msgid` 直接作为 `clientId`（前缀 `wx_`），重投不会产生重复任务；进程内另有 `msgid` 去重缓存（上限 2000），避免重跑解析与重复回复。
+- 配置：全部经环境变量，启动时校验必填项并**只打印缺失的键名**（不打印值）；长连接地址额外校验协议前缀。键名与默认值见 `assistant/.env.example` 与 `assistant/README.md`（`ASSISTANT_ADDR`、`WECOM_BOT_ID`/`WECOM_BOT_SECRET`/`WECOM_BOT_WS_URL`、`TODO_API_BASE`/`TODO_USERNAME`/`TODO_PASSWORD`/`TODO_WORKSPACE_ID`、`KIMI_API_KEY`（或 `MOONSHOT_API_KEY`）/`KIMI_BASE_URL`/`ASSISTANT_MODEL`/`PARSE_TIMEOUT`）。旧的自建应用键名（`WECOM_CORP_ID` 等）已不再使用，设置它们不影响行为（有测试固定这一点）。
+- 调试入口：`-record-test "<一句话>"` 跳过企业微信，直接跑「解析 → 建任务」，用于配机器人前确认凭据与链路。
+- 测试：`cd assistant && go test ./... -count=1` 全部通过 —— 帧结构（出站字段名、入站单聊/群聊/语音/事件、订阅回执 errcode、命令名常量逐个校验）、**长连接完整环路**（本地假 WS 服务端：连接 → 订阅带对凭据 → 下发消息 → 回调内回复 → 断言回复透传 `req_id` 与内容）、缺 `req_id` 的消息被丢弃且不触发回调、订阅被拒时错误被暴露、无连接/无 `req_id` 时回复明确失败、回调后注入生效；解析表驱动（含闰年、时区、非法日期、AI 越界收敛）；编排（重投去重、空消息、记录失败、降级提示、发送失败不影响落库）；配置校验；TodoDay 客户端（401 重登、403/400 分类、不可达）。
+- **真实链路已验证的部分**：用假凭据启动，真实连上 `wss://openws.work.weixin.qq.com`，服务端返回 `errcode 853000 invalid bot_id or secret`。服务端能针对性地拒绝凭据，说明**握手、帧结构与订阅命令均被正确识别**。`/healthz` 探活可用，`-record-test` 走真实后端成功建任务（交周报 / 2026-10-16 / 工作 / 优先级 1）。
+- **仍未验证**：订阅成功之后的消息收发（需要真实 BotID + Secret），以及在企业微信客户端里的实际对话体验。README 明确写了「订阅成功只代表连接建立，不代表消息链路通了」。
+- **未实现**：不含部署（无 Dockerfile/systemd/CI）；不做查询/完成/删除/统计指令（一条消息 = 记一条任务）；固定单工作区，不支持多人绑定；无持久化队列（进程重启会丢未发出的回执，任务本身已落库）；无多轮对话；非文本消息忽略（语音因已转文本可记录）；**不支持多实例**（同一机器人只能一条长连接）。
 
 ## 环境变量与启动（名称，非密钥值）
 

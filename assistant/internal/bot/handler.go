@@ -27,8 +27,11 @@ type Recorder interface {
 }
 
 // Sender 把回执发回给用户。
+//
+// 回复与 reqID 绑定：长连接模式下回复的是「某一次回调」而不是「某个人」，
+// 丢掉 reqID 就没法送达。
 type Sender interface {
-	SendText(ctx context.Context, toUser, content string) error
+	Reply(ctx context.Context, reqID, content string) error
 }
 
 // Incoming 是编排所需的入站消息字段。
@@ -36,6 +39,7 @@ type Incoming struct {
 	FromUser string
 	Text     string
 	MsgID    string
+	ReqID    string // 回复时原样带回
 }
 
 // seenLimit 是去重缓存的容量上限。
@@ -67,13 +71,13 @@ func (h *Handler) Handle(ctx context.Context, msg Incoming) {
 
 	text := strings.TrimSpace(msg.Text)
 	if text == "" {
-		h.reply(ctx, msg.FromUser, "没收到内容。直接说要做的事就行，比如：明天 交周报 #工作 !!!")
+		h.reply(ctx, msg.ReqID, "没收到内容。直接说要做的事就行，比如：明天 交周报 #工作 !!!")
 		return
 	}
 
 	plan, source := h.parser.Parse(ctx, text)
 	if strings.TrimSpace(plan.Title) == "" {
-		h.reply(ctx, msg.FromUser, "没能从这句话里认出计划内容。试试这种写法：明天 交周报 #工作 !!!")
+		h.reply(ctx, msg.ReqID, "没能从这句话里认出计划内容。试试这种写法：明天 交周报 #工作 !!!")
 		return
 	}
 
@@ -89,7 +93,7 @@ func (h *Handler) Handle(ctx context.Context, msg Incoming) {
 
 	if err := h.recorder.CreatePlan(ctx, plan, clientID); err != nil {
 		log.Printf("bot: 建任务失败：%v", err)
-		h.reply(ctx, msg.FromUser, recordFailure(err))
+		h.reply(ctx, msg.ReqID, recordFailure(err))
 		return
 	}
 
@@ -98,12 +102,14 @@ func (h *Handler) Handle(ctx context.Context, msg Incoming) {
 		// 降级是正常的，但要让人知道这次是按关键词理解的。
 		note = "\n（AI 解析未生效，按关键词理解）"
 	}
-	h.reply(ctx, msg.FromUser, "已记录：\n"+brief+note)
+	h.reply(ctx, msg.ReqID, "已记录：\n"+brief+note)
 }
 
-// reply 发回执。发送失败只记日志：用户少一条回执，不该影响已经落库的任务。
-func (h *Handler) reply(ctx context.Context, toUser, content string) {
-	if err := h.sender.SendText(ctx, toUser, content); err != nil {
+// reply 发回执。回执与 reqID 绑定：长连接模式下回复的是「某一次回调」，
+// 丢掉 reqID 就发不出去。发送失败只记日志：用户少一条回执，
+// 不该影响已经落库的任务。
+func (h *Handler) reply(ctx context.Context, reqID, content string) {
+	if err := h.sender.Reply(ctx, reqID, content); err != nil {
 		log.Printf("bot: 回执发送失败：%v", err)
 	}
 }
