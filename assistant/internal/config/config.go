@@ -120,6 +120,9 @@ func (c *Config) HasEnvBot() bool { return c.BotID != "" && c.BotSecret != "" }
 
 // Credentials 是最终生效的一组凭据。来源可能是后端或环境变量。
 type Credentials struct {
+	// Enabled 只由后端决定：网页上停用就是停用，不因为环境变量里还留着
+	// 凭据就继续连接。环境变量路径（后端未配置）视为启用。
+	Enabled   bool
 	BotID     string
 	BotSecret string
 	KimiKey   string
@@ -130,36 +133,47 @@ type Credentials struct {
 
 // Resolve 把「后端返回的配置」与「环境变量」合并成最终生效值。
 //
-// 规则：后端优先；后端某字段为空时回落到环境变量；后端整体不存在
-// （remote 为 nil）则全部用环境变量。这样既让网页配置生效，又不破坏
-// 已有的 .env 部署。
+// 规则分两种情形：
+//
+//   - 后端**没有**配置行（remote == nil）：全用环境变量。这是现有 .env 部署
+//     的路径，必须继续可用。
+//   - 后端**有**配置行：以它为准，**机密与身份字段不回落环境变量**
+//     （BotID / BotSecret / KimiKey）。只有接口地址、模型名这类非机密项
+//     在后端留空时才取配置里的默认值。
+//
+// 为什么不逐字段回落：那会让「撤销」失效。所有者把后端的密钥清空后，
+// 环境变量里残留的旧凭据会把它悄悄顶回来，助手照旧带着一份用户以为已经
+// 撤掉的凭据运行 —— 属于 fail-open。凭据类字段跨来源静默混用还可能出现
+// 「后端的新 Secret 配上环境变量的旧 BotID」这种错配。安全上的账不划算。
 func (c *Config) Resolve(remote *RemoteCredentials) Credentials {
-	out := Credentials{
-		BotID:     c.BotID,
-		BotSecret: c.BotSecret,
-		KimiKey:   c.KimiKey,
-		KimiBase:  c.KimiBase,
-		Model:     c.Model,
-		Source:    "env",
-	}
 	if remote == nil {
-		return out
+		return Credentials{
+			// 走环境变量意味着运维是特意配的，视为启用。
+			Enabled:   true,
+			BotID:     c.BotID,
+			BotSecret: c.BotSecret,
+			KimiKey:   c.KimiKey,
+			KimiBase:  c.KimiBase,
+			Model:     c.Model,
+			Source:    "env",
+		}
 	}
-	out.Source = "backend"
-	if remote.BotID != "" {
-		out.BotID = remote.BotID
+	out := Credentials{
+		// 启用状态同样只由后端决定：停用是用户的显式意图。
+		Enabled:   remote.Enabled,
+		BotID:     remote.BotID,
+		BotSecret: remote.BotSecret,
+		KimiKey:   remote.KimiAPIKey,
+		KimiBase:  strings.TrimRight(remote.KimiBase, "/"),
+		Model:     remote.KimiModel,
+		Source:    "backend",
 	}
-	if remote.BotSecret != "" {
-		out.BotSecret = remote.BotSecret
+	// 非机密项允许取默认值：它们不影响凭据的有效性。
+	if out.KimiBase == "" {
+		out.KimiBase = c.KimiBase
 	}
-	if remote.KimiAPIKey != "" {
-		out.KimiKey = remote.KimiAPIKey
-	}
-	if remote.KimiBase != "" {
-		out.KimiBase = strings.TrimRight(remote.KimiBase, "/")
-	}
-	if remote.KimiModel != "" {
-		out.Model = remote.KimiModel
+	if out.Model == "" {
+		out.Model = c.Model
 	}
 	return out
 }

@@ -21,6 +21,9 @@ const kimiBase = ref("");
 const kimiModel = ref("");
 const busy = ref(false);
 const error = ref("");
+/* 撤销：留空只表示「不修改」，所以删掉已存密钥要显式勾选。 */
+const clearBotSecret = ref(false);
+const clearKimiApiKey = ref(false);
 
 const view = computed(() => st.assistant);
 const ownerOnly = computed(() => !!st.workspace?.role && st.workspace.role !== "owner");
@@ -38,6 +41,9 @@ function fillFromServer() {
   // 密钥字段一律留空：既不回显，也不预填。
   botSecret.value = "";
   kimiApiKey.value = "";
+  // 撤销勾选也要复位，否则第二次保存会把刚填的密钥又删掉。
+  clearBotSecret.value = false;
+  clearKimiApiKey.value = false;
 }
 
 onMounted(async () => {
@@ -69,6 +75,15 @@ async function submit() {
     if (secret) input.botSecret = secret;
     const key = kimiApiKey.value.trim();
     if (key) input.kimiApiKey = key;
+    // 撤销与填写互斥：勾了清除就以清除为准，避免同一次请求语义打架。
+    if (clearBotSecret.value) {
+      input.clearBotSecret = true;
+      delete input.botSecret;
+    }
+    if (clearKimiApiKey.value) {
+      input.clearKimiApiKey = true;
+      delete input.kimiApiKey;
+    }
 
     const ok = await saveAssistantConfig(input);
     if (ok) {
@@ -125,6 +140,10 @@ async function submit() {
             @input="error = ''"
           />
         </label>
+        <label v-if="view?.botSecretSet" class="switch-row clear-row">
+          <input v-model="clearBotSecret" type="checkbox" />
+          <span>{{ C.assistantClearBotSecret }}</span>
+        </label>
 
         <div class="grouphead"><span>{{ C.assistantAiTitle }}</span></div>
         <p class="dialog-note">{{ C.assistantAiHint }}</p>
@@ -140,6 +159,13 @@ async function submit() {
             @input="error = ''"
           />
         </label>
+        <label v-if="view?.kimiApiKeySet" class="switch-row clear-row">
+          <input v-model="clearKimiApiKey" type="checkbox" />
+          <span>{{ C.assistantClearKimiKey }}</span>
+        </label>
+        <p v-if="clearBotSecret || clearKimiApiKey" role="status" class="dialog-note">
+          {{ C.assistantClearHint }}
+        </p>
 
         <div class="form-pair">
           <label class="form-field">
@@ -220,5 +246,13 @@ async function submit() {
   margin-top: 16px;
   padding-top: 12px;
   border-top: 1px solid var(--line-soft);
+}
+/* 撤销勾选框：比主开关低调，避免被误点。 */
+.clear-row {
+  font-size: 12px;
+  color: var(--muted);
+}
+.clear-row em {
+  display: none;
 }
 </style>

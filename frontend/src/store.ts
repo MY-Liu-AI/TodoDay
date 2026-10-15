@@ -69,6 +69,9 @@ export interface AssistantConfigInput {
   kimiBase: string;
   kimiModel: string;
   version: number;
+  /* 显式撤销。留空只表示「不修改」，所以要删掉已存密钥必须明说。 */
+  clearBotSecret?: boolean;
+  clearKimiApiKey?: boolean;
 }
 
 const SORT_KEY = "todo-day-sort";

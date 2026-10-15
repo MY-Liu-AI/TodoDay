@@ -196,4 +196,7 @@ export const C = {
   assistantKeyLost:
     "注意：主密钥一旦丢失，已保存的密钥将无法恢复，需要重新填写。请妥善保管 TODO_CONFIG_KEY。",
   assistantOwnerOnly: "只有工作区所有者可以修改助手配置。",
+  assistantClearBotSecret: "清除已保存的机器人 Secret",
+  assistantClearKimiKey: "清除已保存的 Kimi Key",
+  assistantClearHint: "勾选后保存即删除已存密钥，助手会停止连接，直到重新填写。",
 } as const;

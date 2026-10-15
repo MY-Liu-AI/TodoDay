@@ -87,17 +87,29 @@ func main() {
 		return
 	}
 
-	// 两边都没给机器人凭据，连都连不上，直接说清楚该去哪配。
-	if creds.BotID == "" || creds.BotSecret == "" {
+	// 「停用」与「没配置」要分开报：前者是用户在设置页的正常选择，
+	// 后者才是配置缺失，需要指出该去哪填。
+	if !creds.Enabled {
+		log.Printf("助手在网页设置里处于停用状态：进程保持运行，重新启用后会自动连接")
+	} else if creds.BotID == "" || creds.BotSecret == "" {
 		log.Fatalf("没有可用的机器人凭据：请在网页「设置」页填写 BotID 与 Secret，" +
 			"或设置环境变量 WECOM_BOT_ID / WECOM_BOT_SECRET")
 	}
 
 	// 长连接客户端既负责收消息，也负责回执（回复要带回 req_id）。
 	client := aibot.NewClient(creds.BotID, creds.BotSecret, cfg.WSURL, nil)
-	// 每次重连前重新从后端取凭据：网页上改了配置，重连就生效。
+	// 每次重连前重新从后端取凭据：网页上改了配置（含启用/停用），重连就生效。
 	client.SetCredentialSource(func(ctx context.Context) (string, string, error) {
 		c := resolveCredentials(ctx, cfg, todo)
+		if !c.Enabled {
+			// 开关被关掉：不连接，客户端会保持轮询等待重新启用。
+			return "", "", aibot.ErrDisabled
+		}
+		if c.BotID == "" || c.BotSecret == "" {
+			// 用 ErrNoCredentials 而不是普通错误：普通错误会被当作「暂时
+			// 取不到」而沿用旧凭据继续连，于是凭据被撤销后助手照旧运行。
+			return "", "", aibot.ErrNoCredentials
+		}
 		return c.BotID, c.BotSecret, nil
 	})
 	handler := bot.New(parser, todo, client, kimi != nil)
@@ -106,7 +118,9 @@ func main() {
 	// 健康检查端口。长连接模式下它不是消息入口，仅供探活使用。
 	go healthServer(ctx, cfg.Addr)
 
-	log.Printf("正在连接企业微信长连接 %s（BotID=%s）", cfg.WSURL, creds.BotID)
+	if creds.Enabled {
+		log.Printf("正在连接企业微信长连接 %s（BotID=%s）", cfg.WSURL, creds.BotID)
+	}
 	if err := client.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		log.Fatalf("长连接运行结束：%v", err)
 	}

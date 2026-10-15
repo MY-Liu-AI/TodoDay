@@ -200,21 +200,43 @@ func TestResolvePrefersRemote(t *testing.T) {
 	}
 }
 
-// 后端某个字段为空 → 该字段回落到环境变量，其余仍取后端。
-// 典型场景：用户只在网页填了机器人，Kimi 仍用 .env 里的。
-func TestResolveFieldLevelFallback(t *testing.T) {
+// 后端有配置行时，**机密与身份字段不回落环境变量** —— 这是撤销能生效的前提。
+//
+// 若逐字段回落：所有者把后端的 Bot Secret 清空后，环境变量里残留的旧凭据
+// 会把它悄悄顶回来，助手照旧带着一份用户以为已撤掉的凭据运行。
+func TestResolveDoesNotFallBackSecretsToEnv(t *testing.T) {
 	got := envCfg().Resolve(&RemoteCredentials{
 		BotID: "web-bot", BotSecret: "web-secret",
-		// Kimi 三项都留空
+		// Kimi 三项都留空 —— 表示后端这份配置没有 Kimi 凭据
 	})
-	if got.BotID != "web-bot" {
+	if got.BotID != "web-bot" || got.BotSecret != "web-secret" {
 		t.Fatalf("机器人应取后端：%+v", got)
 	}
-	if got.KimiKey != "env-kimi" || got.KimiBase != "https://env.example/v1" || got.Model != "env-model" {
-		t.Fatalf("后端为空的字段应回落到环境变量：%+v", got)
+	// 关键：不能从环境变量捡回 env-kimi。
+	if got.KimiKey != "" {
+		t.Fatalf("后端没有 Kimi 凭据时不应回落到环境变量，得到 %q", got.KimiKey)
 	}
 	if got.Source != "backend" {
 		t.Fatalf("只要后端有配置，来源就应标为 backend：%s", got.Source)
+	}
+}
+
+// 非机密项（接口地址、模型名）允许取默认值：它们不影响凭据有效性。
+func TestResolveUsesDefaultsForNonSecrets(t *testing.T) {
+	got := envCfg().Resolve(&RemoteCredentials{BotID: "b", BotSecret: "s"})
+	if got.KimiBase != "https://env.example/v1" {
+		t.Fatalf("接口地址应取默认值：%q", got.KimiBase)
+	}
+	if got.Model != "env-model" {
+		t.Fatalf("模型名应取默认值：%q", got.Model)
+	}
+}
+
+// 撤销：后端明确不带凭据时，结果里就必须是空的 —— 调用方据此停止连接。
+func TestResolveRevocationYieldsEmptyCredentials(t *testing.T) {
+	got := envCfg().Resolve(&RemoteCredentials{Enabled: true})
+	if got.BotID != "" || got.BotSecret != "" || got.KimiKey != "" {
+		t.Fatalf("撤销后凭据应为空，得到 %+v", got)
 	}
 }
 
@@ -223,5 +245,43 @@ func TestResolveWithNothing(t *testing.T) {
 	got := (&Config{}).Resolve(nil)
 	if got.BotID != "" || got.BotSecret != "" {
 		t.Fatalf("两边都没有时应为空：%+v", got)
+	}
+}
+
+/* ── Enabled：网页上「停用助手」开关必须真的被助手尊重 ──────────────── */
+
+// 后端未配置（走环境变量）→ 视为启用：运维特意配的就是要用。
+func TestResolveEnablesWhenUsingEnv(t *testing.T) {
+	if got := envCfg().Resolve(nil); !got.Enabled {
+		t.Fatalf("环境变量路径应视为启用：%+v", got)
+	}
+}
+
+// 后端明确停用 → 必须为 false，否则网页上那个开关就是个摆设。
+func TestResolveRespectsRemoteDisabled(t *testing.T) {
+	got := envCfg().Resolve(&RemoteCredentials{
+		Enabled: false, BotID: "web-bot", BotSecret: "web-secret",
+	})
+	if got.Enabled {
+		t.Fatalf("后端停用时 Enabled 必须为 false：%+v", got)
+	}
+	// 凭据字段仍然会被填上（由调用方决定是否使用），但启用状态以用户意图为准。
+	if got.BotID != "web-bot" {
+		t.Fatalf("凭据字段仍应合并：%+v", got)
+	}
+}
+
+// 关键回归：环境变量里有凭据，也不能把用户的「停用」覆盖回启用。
+func TestResolveDisabledWinsOverEnvCredentials(t *testing.T) {
+	cfg := envCfg() // 环境变量里有完整的 bot 凭据
+	got := cfg.Resolve(&RemoteCredentials{Enabled: false})
+	if got.Enabled {
+		t.Fatal("用户在网页上停用后，环境变量里残留的凭据不应把它变回启用")
+	}
+}
+
+func TestResolveRespectsRemoteEnabled(t *testing.T) {
+	if got := (&Config{}).Resolve(&RemoteCredentials{Enabled: true, BotID: "b"}); !got.Enabled {
+		t.Fatalf("后端启用时应为 true：%+v", got)
 	}
 }

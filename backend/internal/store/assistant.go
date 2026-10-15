@@ -38,6 +38,11 @@ type AssistantConfigInput struct {
 	KimiAPIKeyEnc string
 	KimiBase      string
 	KimiModel     string
+	// 显式清除。空密文只能表示「保留原值」（前端不回显密钥，不能因为
+	// 用户没重填就把密钥抹掉），所以要删除已存凭据必须显式说出来 ——
+	// 否则「撤销」这个动作在系统里根本不存在。
+	ClearBotSecret  bool
+	ClearKimiAPIKey bool
 }
 
 const assistantCols = `workspace_id, enabled, bot_id, bot_secret_enc, kimi_api_key_enc,
@@ -83,6 +88,34 @@ func (s *Store) SaveAssistantConfig(ctx context.Context, wsID, userID int64, in 
 			return err
 		}
 
+		// 先在 Go 里算出最终要写入的两个密文，规则一目了然：
+		//   显式清除   → 空（真删除）
+		//   提供了新值 → 新密文
+		//   否则       → 保留原值（前端不回显密钥，没重填就不该抹掉）
+		// 比在 SQL 里嵌套 CASE 清楚，也不会因为参数顺序写错而误删。
+		prevBot, prevKimi := "", ""
+		if existing != nil {
+			prevBot, prevKimi = existing.BotSecretEnc, existing.KimiAPIKeyEnc
+		}
+		// 「清除」与「新值」同时给出属于矛盾输入，这里以**清除**为准。
+		// 取这个方向是因为两者的失败代价不对称：删掉之后凭据缺失是可见的
+		// （助手马上报「没有凭据」），而留着一份用户以为已删的凭据是静默的
+		// 危险 —— 正是要堵的 fail-open。所以 switch 的顺序是刻意的，不是碰巧。
+		botSecretEnc := prevBot
+		switch {
+		case in.ClearBotSecret:
+			botSecretEnc = ""
+		case in.BotSecretEnc != "":
+			botSecretEnc = in.BotSecretEnc
+		}
+		kimiEnc := prevKimi
+		switch {
+		case in.ClearKimiAPIKey:
+			kimiEnc = ""
+		case in.KimiAPIKeyEnc != "":
+			kimiEnc = in.KimiAPIKeyEnc
+		}
+
 		if existing == nil {
 			// 首次写入：version 若被指定（客户端以为存在）则视为冲突。
 			if version != 0 {
@@ -93,7 +126,7 @@ func (s *Store) SaveAssistantConfig(ctx context.Context, wsID, userID int64, in 
 				   (workspace_id, enabled, bot_id, bot_secret_enc, kimi_api_key_enc,
 				    kimi_base, kimi_model, updated_by, updated_at, version)
 				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-				wsID, in.Enabled, in.BotID, in.BotSecretEnc, in.KimiAPIKeyEnc,
+				wsID, in.Enabled, in.BotID, botSecretEnc, kimiEnc,
 				in.KimiBase, in.KimiModel, userID, now); err != nil {
 				return err
 			}
@@ -101,22 +134,19 @@ func (s *Store) SaveAssistantConfig(ctx context.Context, wsID, userID int64, in 
 			if version != 0 && version != existing.Version {
 				return ErrConfigConflict
 			}
-			// 空串 = 保留原值：CASE 保证不会因为「前端没回显密钥」而抹掉它。
 			if _, err := tx.ExecContext(ctx,
 				`UPDATE workspace_assistant_config SET
 				   enabled = ?,
 				   bot_id = ?,
-				   bot_secret_enc   = CASE WHEN ? != '' THEN ? ELSE bot_secret_enc END,
-				   kimi_api_key_enc = CASE WHEN ? != '' THEN ? ELSE kimi_api_key_enc END,
+				   bot_secret_enc = ?,
+				   kimi_api_key_enc = ?,
 				   kimi_base = ?,
 				   kimi_model = ?,
 				   updated_by = ?,
 				   updated_at = ?,
 				   version = version + 1
 				 WHERE workspace_id = ?`,
-				in.Enabled, in.BotID,
-				in.BotSecretEnc, in.BotSecretEnc,
-				in.KimiAPIKeyEnc, in.KimiAPIKeyEnc,
+				in.Enabled, in.BotID, botSecretEnc, kimiEnc,
 				in.KimiBase, in.KimiModel, userID, now, wsID); err != nil {
 				return err
 			}

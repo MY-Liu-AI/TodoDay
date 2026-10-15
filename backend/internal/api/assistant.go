@@ -79,6 +79,9 @@ func (s *Server) putAssistantConfig(w http.ResponseWriter, r *http.Request, u *s
 		KimiBase   string  `json:"kimiBase"`
 		KimiModel  string  `json:"kimiModel"`
 		Version    int64   `json:"version"`
+		// 显式撤销。留空只表示「不修改」，所以要删掉已存凭据必须明说。
+		ClearBotSecret  bool `json:"clearBotSecret"`
+		ClearKimiAPIKey bool `json:"clearKimiApiKey"`
 	}
 	if err := decodeJSON(r, &in); err != nil {
 		writeError(w, http.StatusBadRequest, "validation_failed", "请求格式错误")
@@ -116,11 +119,15 @@ func (s *Server) putAssistantConfig(w http.ResponseWriter, r *http.Request, u *s
 		return
 	}
 
+	// 撤销不需要主密钥：那是删除而不是存储，缺密钥时也应当允许 ——
+	// 否则主密钥一丢，用户连清理自己凭据的办法都没有。
 	input := store.AssistantConfigInput{
-		Enabled:   in.Enabled,
-		BotID:     botID,
-		KimiBase:  base,
-		KimiModel: model,
+		Enabled:         in.Enabled,
+		BotID:           botID,
+		KimiBase:        base,
+		KimiModel:       model,
+		ClearBotSecret:  in.ClearBotSecret,
+		ClearKimiAPIKey: in.ClearKimiAPIKey,
 	}
 	if s.box != nil {
 		if in.BotSecret != nil && strings.TrimSpace(*in.BotSecret) != "" {
