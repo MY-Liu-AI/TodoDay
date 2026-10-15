@@ -65,6 +65,28 @@ const dailyBars = computed(() => {
 });
 const barMax = computed(() => Math.max(1, ...dailyBars.value.map((b) => b.sec)));
 
+/* 折线图。viewBox 固定 280×90，靠 preserveAspectRatio 等比缩放，
+   这样圆点不会被拉成椭圆。上下各留一点内边距，免得 0 值和峰值贴着边框。 */
+const TREND_W = 280;
+const TREND_H = 90;
+const TREND_PAD = 10;
+const trendPoints = computed(() => {
+  const bars = dailyBars.value;
+  const max = barMax.value;
+  const span = Math.max(1, bars.length - 1);
+  return bars.map((b, i) => ({
+    ...b,
+    x: (i / span) * TREND_W,
+    y: TREND_H - TREND_PAD - (b.sec / max) * (TREND_H - TREND_PAD * 2),
+  }));
+});
+const trendLine = computed(() => trendPoints.value.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" "));
+const trendArea = computed(() => {
+  const pts = trendPoints.value;
+  if (!pts.length) return "";
+  return `${pts[0].x},${TREND_H} ${trendLine.value} ${pts[pts.length - 1].x},${TREND_H}`;
+});
+
 function onStart() {
   start();
   sound.tick();
@@ -229,20 +251,34 @@ onMounted(() => loadStats());
       </div>
 
       <div class="grouphead"><span>{{ C.focusDailyTitle }}</span></div>
-      <div class="weekbar focus-daily">
-        <div
-          v-for="b in dailyBars"
-          :key="b.key"
-          class="d"
-          :title="`${b.key} · ${fmtDuration(b.sec)} · ${b.n} 🍅`"
+      <div class="focus-trend">
+        <svg
+          :viewBox="`0 0 ${TREND_W} ${TREND_H}`"
+          preserveAspectRatio="xMidYMid meet"
+          role="img"
+          :aria-label="C.focusDailyTitle"
         >
-          <div class="b" :style="{ height: (b.sec / barMax) * 58 + 2 + 'px' }" />
-          <div v-if="new Date(b.ts).getDay() === 1 || b.ts === TODAY" class="l">
-            {{ b.ts === TODAY ? C.today : new Date(b.ts).getDate() }}
-          </div>
+          <polygon class="area" :points="trendArea" />
+          <polyline class="line" :points="trendLine" />
+          <circle
+            v-for="p in trendPoints"
+            :key="p.key"
+            class="pt"
+            :class="p.ts === TODAY ? 'is-on' : ''"
+            :cx="p.x"
+            :cy="p.y"
+            r="2.4"
+          >
+            <title>{{ `${p.key} · ${fmtDuration(p.sec)} · ${p.n} 🍅` }}</title>
+          </circle>
+        </svg>
+        <div class="focus-trend-axis" aria-hidden="true">
+          <span v-for="p in trendPoints" :key="p.key" class="tick">
+            <template v-if="p.ts === TODAY">{{ C.today }}</template>
+            <template v-else-if="new Date(p.ts).getDay() === 1">{{ new Date(p.ts).getDate() }}</template>
+          </span>
         </div>
       </div>
-      <p class="history-note">{{ C.focusStatsNote }}</p>
 
       <div class="grouphead"><span>{{ C.focusTodaySessions }}</span></div>
       <p v-if="!fs.stats?.sessions.length" class="agenda-empty">{{ C.focusNoSessions }}</p>

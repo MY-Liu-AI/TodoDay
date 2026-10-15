@@ -1314,20 +1314,48 @@ button:disabled {
   font-size: 15px;
   white-space: nowrap;
 }
-.focus-daily {
-  padding-inline: 0;
+.focus-trend {
+  margin-top: 4px;
 }
-.focus-daily .d {
+.focus-trend svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+.focus-trend .area {
+  fill: var(--accent-soft);
+  stroke: none;
+}
+.focus-trend .line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+.focus-trend .pt {
+  fill: var(--accent);
+}
+.focus-trend .pt.is-on {
+  fill: var(--panel);
+  stroke: var(--accent);
+  stroke-width: 1.6;
+  vector-effect: non-scaling-stroke;
+}
+.focus-trend-axis {
+  display: flex;
+  margin-top: 6px;
+}
+.focus-trend-axis .tick {
+  flex: 1;
   min-width: 0;
-}
-.focus-daily .b {
-  min-height: 2px;
-}
-.focus-daily .l {
+  text-align: center;
+  font-family: var(--mono);
   font-size: 9px;
-}
-.focus-side .history-note {
-  margin: 8px 0 24px;
+  color: var(--faint);
+  white-space: nowrap;
 }
 .focus-sessions {
   display: grid;

@@ -150,7 +150,6 @@ export const C = {
   focusTodaySessions: "今天的专注记录",
   focusNoSessions: "今天还没有专注记录。",
   focusDailyTitle: "近 4 周每日专注",
-  focusStatsNote: "统计来自服务端专注记录，按工作区时区归属到番茄结束的那一天。",
   focusCompleted: "完整",
   focusPartial: "中断",
   minutes: "分",
