@@ -17,8 +17,9 @@
 **番茄专注（2026-10-15 增量）**
 - 表 `focus_sessions`（migration 0002，含 down）：workspace_id / user_id / task_id（可空）/ task_title 快照 / planned_sec / duration_sec / status(completed|abandoned) / started_at / ended_at / client_id 幂等键；索引 (workspace_id, ended_at)。
 - API：`POST /api/workspaces/{wid}/focus/sessions`（记一次专注；completed 必须 duration ≥ planned；task_id 必须属于该工作区否则 404；客户端时钟超前封顶到服务端时间）、`GET /api/workspaces/{wid}/focus/stats?days=N`（today / week（周一起）/ month（自然月）聚合 + 每日 map + 今日记录列表，按工作区时区以 ended_at 归属）。
-- 前端 `focus.ts`：25 分钟固定，剩余时间按 `endsAt - now` 推算；完成/放弃时才写服务端，失败保留待重试（`fs.pending`）并提示，不伪造已统计；登出清状态。`FocusView.vue`：今日任务选择器、环形倒计时、今日番茄/今日/本周/本月时长、近 4 周每日柱图、今日记录。
-- 测试：后端 `TestFocusSessionsAndStats`（幂等重放、abandoned 计时不计番茄、短时 completed 400、跨工作区 task 404 / stats 403、today/week/month/daily/sessions 聚合）；前端 `focus.test.mjs` 7 条契约。真实服务冒烟：1 完整 + 1 中断（420s）→ `todayAgg {pomodoros:1, seconds:1920}`。
+- 前端 `focus.ts`：25 分钟固定，剩余时间按 `endsAt - now` 推算；**进行中的计时持久化到 localStorage（键 `todo-day-focus`，含工作区 id 与结束时刻），刷新页面、切换模块、重开标签页都按原结束时刻继续**，恢复时若已过点则补记一颗并归属当初的结束时刻；铃响由模块触发（不在页面里），切到别的页面也能响；完成/放弃时才写服务端，失败保留待重试（`fs.pending`）并提示，不伪造已统计；登出清状态与快照。`FocusView.vue`：今日任务选择器（可勾选完成）+ 环形倒计时、今日番茄/今日/本周/本月时长、近 4 周每日柱图、今日记录。
+- 测试：后端 `TestFocusSessionsAndStats`（幂等重放、abandoned 计时不计番茄、短时 completed 400、跨工作区 task 404 / stats 403、today/week/month/daily/sessions 聚合）；前端 `focus.test.mjs` 14 条契约（含持久化/恢复/补记/铃响位置/勾选完成）。真实服务冒烟：1 完整 + 1 中断（420s）→ `todayAgg {pomodoros:1, seconds:1920}`。
+- 已知边界：进行中的倒计时存在浏览器 localStorage，仅对当前浏览器有效——换设备或清浏览器数据不会带走未完成的专注；已完成的记录都在服务端，不受影响。
 
 **前端（frontend/，Vue 3.5 + Vite 6 + TypeScript，vue-tsc 严格模式）**
 - 全部页面与原模板一致：日历默认入口、Todo 清单、统计页、浅色默认/可选深色、中文标题「专注. 任务」、键盘可达（原生 dialog、快捷键）、中英对应功能、分类色语义不变。

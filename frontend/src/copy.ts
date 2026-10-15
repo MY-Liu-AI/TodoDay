@@ -156,4 +156,8 @@ export const C = {
   minutes: "分",
   hours: "小时",
   pomodoroUnit: "个",
+  focusToggleDone: "标记完成",
+  focusToggleReopen: "撤销完成",
+  focusRestored: "已接上未完成的专注",
+  focusCaughtUp: "离开期间的专注已完成并记录",
 } as const;

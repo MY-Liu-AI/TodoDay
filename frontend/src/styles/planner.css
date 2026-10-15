@@ -1244,27 +1244,35 @@ button:disabled {
   display: flex;
   align-items: center;
   gap: 10px;
-  width: 100%;
-  padding: 10px 12px;
+  padding: 8px 12px;
   min-height: 44px;
   border: 1px solid transparent;
   border-radius: 8px;
-  background: none;
-  color: var(--ink);
-  text-align: left;
-  font-size: 13px;
   transition:
     background 0.16s var(--ease),
     border-color 0.16s var(--ease);
 }
-.focus-task:hover:not(:disabled) {
+.focus-task:hover {
   background: var(--raised);
 }
 .focus-task.is-picked {
   background: var(--accent-soft);
   border-color: var(--accent);
 }
-.focus-task:disabled {
+.focus-task-pick {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  text-align: left;
+  font-size: 13px;
+}
+.focus-task-pick:disabled {
   opacity: 0.45;
   cursor: default;
 }
@@ -1277,6 +1285,7 @@ button:disabled {
   height: 8px;
   border: 0;
   background: var(--event-line, var(--muted));
+  flex: none;
 }
 .focus-task-title {
   flex: 1;

@@ -1,13 +1,13 @@
 <script setup lang="ts">
 /* 番茄专注页：左边挑今天的事 + 25 分钟倒计时；右边今日/本周/本月读数、
    近 4 周每日柱图、今天的专注记录。所有统计读自服务端。 */
-import { computed, onMounted, onUnmounted, watch } from "vue";
+import { computed, onMounted } from "vue";
 import { C } from "../copy";
 import { DAY, TODAY, midnight } from "../lib/todo.js";
 import { dateValue } from "../lib/model.js";
 import { groupColor } from "../lib/palette.js";
 import { sound, haptic } from "../lib/fx";
-import { st } from "../store";
+import { st, toggleTask } from "../store";
 import type { Item } from "../store";
 import {
   fs,
@@ -90,28 +90,14 @@ function choose(task: Item | null) {
   sound.tick();
 }
 
-/* 铃响：phase 变成 done 时提示音。 */
-watch(
-  () => fs.phase,
-  (p) => {
-    if (p === "done") {
-      sound.ding();
-      haptic(30);
-    }
-  },
-);
+/* 今天的事可以直接在这里勾掉：专注完顺手标记完成，不用切回清单。 */
+function markDone(i: Item) {
+  if (busy.value && fs.task?.id === i.id) return;
+  toggleTask(i);
+  i.done ? sound.tick() : sound.ding();
+  haptic(14);
+}
 
-/* 标签页标题跟着倒计时走，切到别的页面也能看到剩余时间。 */
-const baseTitle = document.title;
-watch(
-  () => [fs.phase, fs.remaining] as const,
-  ([p, r]) => {
-    document.title = p === "running" || p === "paused" ? `${fmtClock(r)} · ${baseTitle}` : baseTitle;
-  },
-);
-onUnmounted(() => {
-  document.title = baseTitle;
-});
 onMounted(() => loadStats());
 </script>
 
@@ -180,28 +166,40 @@ onMounted(() => loadStats());
           <h2>{{ C.focusTodayList }}</h2>
           <span>{{ todayTasks.length }} {{ C.tasks }}</span>
         </div>
-        <p v-if="!todayTasks.length" class="agenda-empty">{{ C.focusEmpty }}</p>
-        <div v-else class="focus-task-list" role="radiogroup" :aria-label="C.focusTodayList">
-          <button
+        <div v-if="!todayTasks.length" class="agenda-empty">{{ C.focusEmpty }}</div>
+        <div v-else class="focus-task-list">
+          <div
             v-for="i in todayTasks"
             :key="i.id"
             class="focus-task"
             :class="[fs.task?.id === i.id ? 'is-picked' : '', i.done ? 'is-done' : '']"
             :data-color="groupColor(i.g)"
-            role="radio"
-            :aria-checked="fs.task?.id === i.id"
-            :disabled="busy && fs.task?.id !== i.id"
-            @click="choose(fs.task?.id === i.id ? null : i)"
           >
-            <span class="event-dot" />
-            <span class="focus-task-title">{{ i.t }}</span>
-            <span class="task-group-label">{{ i.g }}</span>
-            <span class="focus-task-state">
-              <template v-if="fs.task?.id === i.id">{{ busy ? C.focusPicked : C.focusChange }}</template>
-              <template v-else-if="i.done">{{ C.done }}</template>
-              <template v-else>{{ C.focusPick }}</template>
-            </span>
-          </button>
+            <button
+              class="task-check"
+              :class="i.done ? 'is-checked' : ''"
+              :aria-label="(i.done ? C.focusToggleReopen : C.focusToggleDone) + ' ' + i.t"
+              :aria-pressed="i.done"
+              @click="markDone(i)"
+            >
+              <Icon name="check" :size="14" />
+            </button>
+            <button
+              class="focus-task-pick"
+              :disabled="busy && fs.task?.id !== i.id"
+              :aria-pressed="fs.task?.id === i.id"
+              :aria-label="C.focusPick + ' ' + i.t"
+              @click="choose(fs.task?.id === i.id ? null : i)"
+            >
+              <span class="event-dot" />
+              <span class="focus-task-title">{{ i.t }}</span>
+              <span class="task-group-label">{{ i.g }}</span>
+              <span class="focus-task-state">
+                <template v-if="fs.task?.id === i.id">{{ busy ? C.focusPicked : C.focusChange }}</template>
+                <template v-else>{{ C.focusPick }}</template>
+              </span>
+            </button>
+          </div>
         </div>
       </div>
     </section>

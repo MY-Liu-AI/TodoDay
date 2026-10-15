@@ -52,3 +52,48 @@ test("focus page is wired into the sidebar between plan and insights", () => {
 test("focus module clears itself on logout", () => {
   assert.match(focus, /registerLogoutHook\(clearStats\)/);
 });
+
+test("running timer is persisted and restored across reloads", () => {
+  assert.match(focus, /const STORE_KEY = "todo-day-focus"/);
+  assert.match(focus, /export function restore\(\)/);
+  assert.match(focus, /localStorage\.setItem\(STORE_KEY/);
+  // 快照按工作区区分：换账号不会捡到别人的倒计时。
+  assert.match(focus, /p\.ws !== st\.workspace\.id/);
+  assert.match(app, /restoreFocus\(\)/);
+});
+
+test("start and pause persist the running snapshot", () => {
+  const startFn = focus.slice(focus.indexOf("export function start"), focus.indexOf("export function pause"));
+  assert.match(startFn, /persist\(\)/);
+  const pauseFn = focus.slice(focus.indexOf("export function pause"), focus.indexOf("async function finish"));
+  assert.match(pauseFn, /persist\(\)/);
+});
+
+test("a timer that elapsed while away is recorded at its original end time", () => {
+  assert.match(focus, /record\("completed", POMODORO_SEC, p\.endsAt\)/);
+  const recordFn = focus.slice(focus.indexOf("async function record"));
+  assert.match(recordFn, /endedAt\?: number/);
+});
+
+test("finished, abandoned and reset timers clear the persisted snapshot", () => {
+  const finishFn = focus.slice(focus.indexOf("async function finish"), focus.indexOf("export async function abandon"));
+  assert.match(finishFn, /clearPersisted\(\)/);
+  const abFn = focus.slice(focus.indexOf("export async function abandon"), focus.indexOf("export function reset"));
+  assert.match(abFn, /clearPersisted\(\)/);
+  const resetFn = focus.slice(focus.indexOf("export function reset"), focus.indexOf("async function record"));
+  assert.match(resetFn, /clearPersisted\(\)/);
+});
+
+test("the bell fires from the module, not the page, so it rings on other pages", () => {
+  const finishFn = focus.slice(focus.indexOf("async function finish"), focus.indexOf("export async function abandon"));
+  assert.match(finishFn, /sound\.ding\(\)/);
+  assert.doesNotMatch(view, /fs\.phase,?\s*\(p\)/);
+});
+
+test("today's tasks can be completed from the focus page", () => {
+  assert.match(view, /import \{ st, toggleTask \} from "\.\.\/store"/);
+  assert.match(view, /function markDone/);
+  assert.match(view, /@click="markDone\(i\)"/);
+  // 勾选是独立控件，不能把按钮套在按钮里。
+  assert.match(view, /class="task-check"/);
+});

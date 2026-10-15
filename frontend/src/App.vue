@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { C } from "./copy";
 import {
   SORTS,
@@ -42,7 +42,7 @@ import Stats from "./components/Stats.vue";
 import TaskDialog from "./components/TaskDialog.vue";
 import AuthView from "./components/AuthView.vue";
 import FocusView from "./components/FocusView.vue";
-import { fs } from "./focus";
+import { fs, restore as restoreFocus, fmtClock } from "./focus";
 
 const page = ref<"tasks" | "focus" | "stats">("tasks");
 const mode = ref<"list" | "calendar">("calendar");
@@ -208,6 +208,25 @@ function switchMode(v: "list" | "calendar") {
 
 /* 启动即检查会话：已登录直接拉任务，未登录落在 AuthView。 */
 initSession();
+
+/* 会话就绪后接上上次没走完的番茄倒计时（任务列表已到齐才能还原绑定的任务）。 */
+watch(
+  () => [st.ready, st.authed, st.items.length] as const,
+  () => {
+    if (st.ready && st.authed) restoreFocus();
+  },
+  { immediate: true },
+);
+
+/* 倒计时在标签页标题里可见：切到别的模块、甚至切走标签页，也看得到剩余时间。 */
+const baseTitle = document.title;
+watch(
+  () => [fs.phase, fs.remaining] as const,
+  ([p, r]) => {
+    document.title = p === "running" || p === "paused" ? `${fmtClock(r)} · ${baseTitle}` : baseTitle;
+  },
+  { immediate: true },
+);
 </script>
 
 <template>
