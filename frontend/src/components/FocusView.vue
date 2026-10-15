@@ -267,7 +267,7 @@ onMounted(() => loadStats());
             :class="p.ts === TODAY ? 'is-on' : ''"
             :cx="p.x"
             :cy="p.y"
-            r="2.4"
+            r="1.6"
           >
             <title>{{ `${p.key} · ${fmtDuration(p.sec)} · ${p.n} 🍅` }}</title>
           </circle>

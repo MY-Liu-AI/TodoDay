@@ -1330,7 +1330,7 @@ button:disabled {
 .focus-trend .line {
   fill: none;
   stroke: var(--accent);
-  stroke-width: 1.6;
+  stroke-width: 1.1;
   stroke-linejoin: round;
   stroke-linecap: round;
   vector-effect: non-scaling-stroke;
@@ -1341,7 +1341,7 @@ button:disabled {
 .focus-trend .pt.is-on {
   fill: var(--panel);
   stroke: var(--accent);
-  stroke-width: 1.6;
+  stroke-width: 1.1;
   vector-effect: non-scaling-stroke;
 }
 .focus-trend-axis {
