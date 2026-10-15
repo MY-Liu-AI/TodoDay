@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -26,9 +28,50 @@ import (
 
 const callbackPath = "/wecom/callback"
 
+// handshakeURL 拼出可直接用 curl 打开的 URL 验证地址。
+//
+// 必须走 url.Values 而不是手工拼字符串：echostr 是 base64，含有 + / =
+// 三种在 query string 里有特殊含义的字符，其中 + 会被解析成空格 ——
+// 手工拼接出来的地址签名必然不匹配，解密也会失败。
+func handshakeURL(addr, path, signature, timestamp, nonce, echoStr string) string {
+	q := url.Values{}
+	q.Set("msg_signature", signature)
+	q.Set("timestamp", timestamp)
+	q.Set("nonce", nonce)
+	q.Set("echostr", echoStr)
+	return fmt.Sprintf("http://localhost%s%s?%s", addr, path, q.Encode())
+}
+
+// runRecordTest 执行一次「解析 → 建任务」，不经过企业微信。
+// 用来在配置回调之前先确认凭据、工作区与解析链路都是通的。
+func runRecordTest(ctx context.Context, parser *parse.Parser, recorder interface {
+	CreatePlan(context.Context, parse.Plan, string) error
+}, text string) error {
+	plan, source := parser.Parse(ctx, text)
+	if strings.TrimSpace(plan.Title) == "" {
+		return fmt.Errorf("没能从 %q 里解析出任务内容", text)
+	}
+	clientID := fmt.Sprintf("manual-%d", time.Now().Unix())
+	if err := recorder.CreatePlan(ctx, plan, clientID); err != nil {
+		return err
+	}
+	log.Printf("已记录：%s ｜ 日期 %s ｜ 分组 %s ｜ 优先级 %d（解析来源：%s）",
+		plan.Title, dueOrNone(plan.Due), plan.Group, plan.Priority, source)
+	return nil
+}
+
+func dueOrNone(due string) string {
+	if due == "" {
+		return "未排期"
+	}
+	return due
+}
+
 func main() {
 	printHandshake := flag.Bool("print-handshake", false,
 		"生成一条可用于本地自测的回调验证 URL 后退出（不需要真实企业微信后台）")
+	recordTest := flag.String("record-test", "",
+		"不走企业微信，直接把这句话按「解析 → 建任务」跑一遍后退出，用于验证配置")
 	flag.Parse()
 
 	cfg, err := config.Load()
@@ -47,8 +90,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("生成验证参数失败：%v", err)
 		}
-		fmt.Printf("curl -i 'http://localhost%s%s?msg_signature=%s&timestamp=%s&nonce=testnonce&echostr=%s'\n",
-			cfg.Addr, callbackPath, sig, ts, echo)
+		fmt.Println("curl -i '" + handshakeURL(cfg.Addr, callbackPath, sig, ts, "testnonce", echo) + "'")
 		return
 	}
 
@@ -85,6 +127,13 @@ func main() {
 		log.Printf("未配置 KIMI_API_KEY，全部使用规则解析")
 	}
 	parser := parse.NewParser(kimi, loc)
+
+	if *recordTest != "" {
+		if err := runRecordTest(ctx, parser, todo, *recordTest); err != nil {
+			log.Fatalf("试记录失败：%v", err)
+		}
+		return
+	}
 
 	sender := wecom.NewClient(cfg.CorpID, cfg.Secret, cfg.AgentID)
 	handler := bot.New(parser, todo, sender, cfg.KimiEnabled())
