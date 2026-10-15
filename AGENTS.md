@@ -4,7 +4,7 @@
 
 ## 当前实现
 
-这是可交互的前端模板，不是已接入后端的全栈应用。任务保存、删除恢复、排序全部使用浏览器内存/localStorage；日历任务与历史热力包含样本。不得把前端操作成功当作数据库、文件存储或云同步成功。
+这是已接入真实后端的完整应用：frontend/ 为 Vue 3 + Vite + TypeScript（页面与原版一致），backend/ 为 Go 1.26 服务端（net/http + 嵌入式 SQLite，WAL）。任务持久化在服务端数据库（users/sessions/workspaces/workspace_members/task_groups/tasks/task_events），支持注册登录、多工作区、乐观并发（version + 409）、幂等创建（client_id）、软删与撤销恢复、服务端排序事务；热力/连续天数/近 7 天统计同源（task_events 按工作区时区聚合）。前端不再有样本注入；localStorage 仅保留排序偏好、主题和「用户明确同意后才执行」的 legacy 导入流程（含 `todo-day-imported` 标记）。不得把前端操作成功当作对象存储或云同步成功——对象存储/上传能力尚未接入，见 FULLSTACK.md 与 DELIVERY.md。
 
 ## 下游 agent 必须遵守
 

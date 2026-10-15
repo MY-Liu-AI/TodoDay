@@ -1,53 +1,66 @@
 # Todo Day · 专注. 任务
 
-一个浅色默认的个人任务规划模板，React 19 + TypeScript + Vite。默认进入日历，也提供 Todo 清单和进度统计，中英文功能一致。参考用户提供的图片采用青绿主色及分类色日程，可选深色主题。
+一个浅色默认的个人任务规划应用，前端 Vue 3 + TypeScript + Vite，后端 Go + SQLite。默认进入日历，也提供 Todo 清单和进度统计，中英文功能一致。参考用户提供的图片采用青绿主色及分类色日程，可选深色主题。
 
 ## 给线上 agent 的强制接入指令
 
-使用模板前先读 [AGENTS.md](./AGENTS.md) 和 [FULLSTACK.md](./FULLSTACK.md)。用户要求完整应用时，必须补齐数据库、身份/权限、任务 API、跨设备持久化与真实活动记录；用户需要上传时再接私有对象存储及鉴权/签名/生命周期。后者不是当前已有功能。
-前端保持产品文案，不显示“交互 Demo”或开发横幅。不得因此把 mock 当成真实后端：本地状态和存储错误仍须如实反馈，交付时明确未实现项。详细入口、数据字段、迁移和验收条件见 FULLSTACK.md。源码交付必须保留这三份说明。
+使用模板前先读 [AGENTS.md](./AGENTS.md) 和 [FULLSTACK.md](./FULLSTACK.md)。数据库、身份/权限、任务 API、跨设备持久化与真实活动记录已在本仓库实现（frontend/ + backend/）；用户需要上传附件时再接私有对象存储及鉴权/签名/生命周期，后者当前未接入，不是已有功能。
+前端保持产品文案，不显示"交互 Demo"或开发横幅。不得把 mock 当成真实后端：本地状态和存储错误仍须如实反馈，交付时明确未实现项。详细入口、数据字段、迁移和验收条件见 FULLSTACK.md，实施与未接入清单见 DELIVERY.md。源码交付必须保留这三份说明。
 
 ## 能力边界
 
-任务只保存在本浏览器 localStorage（todo-day-demo-cn，保留旧键以兼容数据），没有登录、后端数据库、云同步或通知。首次使用含59–64条当月任务（随月份天数变化），包括工作、学习、生活、健康、重要事项和收件箱。原七条样本仅在内容/顺序/状态完全未编辑且尚未升级时追加月度样本；修改过的工作区不动，不重置存储。热力图历史为固定种子示例，统计页保留简短来源说明；生产必须替换真实活动数据。
-旧 todo-day 存储可迁移读取，不删除旧键；损坏数据不覆盖，保存失败给提示，可导出 CSV 备份。隐私模式/清缓存不保证保留数据。
+任务保存在服务端 SQLite 数据库（WAL），注册即用，bcrypt 密码 + httpOnly 会话 Cookie（7 天滚动）；同一账号在刷新、重新登录、另一个浏览器读到同一份数据。工作区按 workspace_members 做服务端授权，越权访问返回 403。编辑/完成用 version 乐观并发，冲突返回 409 并由前端以服务端版本替换；创建用 client_id 幂等键防重复提交。删除为软删除，撤销走服务端恢复；批量排序/删除为单事务。
+统计（18 周热力、连续天数、近 7 天完成、分组读数）全部来自 task_events 同一聚合口径（工作区时区，默认 Asia/Shanghai），无合成历史；新账号没有任何样本任务。旧版 localStorage（`todo-day-demo-cn` / `todo-day`）仅提供用户确认的导入：预览数量、服务端去重、成功前保留原值。
+未实现：对象存储/附件上传、通知推送、外部数据库、多工作区切换 UI（服务端已支持多工作区成员）。CSV/海报/打印导出由客户端本机生成，不自动外发。隐私模式/清浏览器缓存不影响服务端数据，但本地草稿不保留。
 
 ## 功能与入口
 
 - Todo：全部/今天/未完成/已完成、搜索、分组、排序；今天只包含当天截止任务，逾期单独分组。
-- 快速添加：“明天 交周报 #工作 !!!”，支持日期/分组/优先级（!!!高、!!中、!普通），不是AI，不承诺小时、重复任务识别。
+- 快速添加："明天 交周报 #工作 !!!"，支持日期/分组/优先级（!!!高、!!中、!普通），不是AI，不承诺小时、重复任务识别。
 - 新建/编辑：标题、日期、分组、优先级；可键盘操作的原生dialog，空标题错误不会关闭弹窗。
 - 日历（默认入口）：七列月历、分类色任务、日期选择、当天议程、当天添加；手机以日期+任务数+分类色标展示，具体内容在议程中。颜色、分组文字同时存在，不以颜色作为唯一提示。清单/日历共用一份数据。未排期任务在日历下方可编辑。
 - 完成/撤销完成、删除/撤销删除、清理已完成/撤销；只保留最近一批删除的撤销。
 - 手动排序支持同日期分组内pointer拖拽与上下按钮；其他排序隐藏拖动入口。
-- 统计保留18周热力、分组读数、近7天完成柱图；历史示例数据与清单统计不是同一口径。
+- 统计保留 18 周热力、分组读数、近 7 天完成柱图；与清单数据同一口径（task_events）。
 - CSV、Canvas海报、打印/PDF保留在统计页。图片/PDF由用户触发，不自动外发。
 
 ## 结构
 
-src/App.tsx：共享state、布局、模式、存储与反馈。
-src/copy.ts：本地化UI文案。
-src/components/CalendarView.tsx：独立月历与日议程。
-src/components/Calendar.tsx：小月历日期筛选。
-src/components/TaskDialog.tsx：可访问新建/编辑表单。
-src/components/List.tsx：列表、勾选、拖拽及键盘排序。
-src/components/Heat.tsx / Recap.tsx / Stats.tsx：原有统计。
-src/lib/model.js：存储校验、搜索、排序、日期网格纯函数。
-src/lib/todo.js：解析、分桶、日期标签。
-src/lib/samples.js / palette.js：按当月日期生成样本、固定中英分类色映射。
-src/lib/heat.js / kit.js / tool.js：原有引擎，改版未修改。
-src/styles/planner.css：本次浅色工作台样式，沿用kit/tool/app基础。
+frontend/src/App.vue：共享状态（store.ts）、布局、模式、反馈与导入弹窗。
+frontend/src/store.ts：响应式状态、乐观更新/回滚、409 冲突替换、legacy 导入。
+frontend/src/api.ts：REST 客户端（超时、CSRF 头、ApiError 带服务端最新任务）。
+frontend/src/copy.ts：本地化 UI 文案。
+frontend/src/components/：AuthView、CalendarView（独立月历与日议程）、Calendar（小月历筛选）、TaskDialog（可访问新建/编辑表单）、List（列表、勾选、拖拽及键盘排序）、Heat/Recap/Stats（统计，同源数据）、Icon。
+frontend/src/lib/model.js：搜索、排序、日期网格纯函数（validState 仅用于 legacy 导入校验）。
+frontend/src/lib/todo.js：解析、分桶、日期标签（无样本注入）。
+frontend/src/lib/heat.js：task_events 聚合的换算与统计口径。
+frontend/src/lib/palette.js / export.ts / fx.ts：中英分类色映射、CSV/海报导出、音效触感。
+backend/cmd/server/main.go：服务入口（优雅退出、内嵌时区库）。
+backend/internal/api/：HTTP 路由、会话认证、CSRF/安全头/限流、任务与统计接口、静态托管 SPA。
+backend/internal/store/：SQLite 连接（WAL、单写）、embedded migration、users/sessions、tasks、task_events 聚合。
+frontend/src/styles/planner.css：浅色工作台样式，沿用 kit/tool/app 基础，可选深色。
 
 ## 字体与许可
 
-Geist / Geist Mono 与 Noto Sans SC 均本地托管，SIL OFL 1.1许可证在public/fonts。Noto Sans SC来自Google Fonts官方，完整中文覆盖（WOFF2约7.4MB，font-display:swap），不依赖外部字体请求。英文数字优先Geist，中文回退Noto Sans SC。没有图库品牌图片或商业字体。
+Geist / Geist Mono 与 Noto Sans SC 均本地托管，SIL OFL 1.1 许可证在 frontend/public/fonts。Noto Sans SC 来自 Google Fonts 官方，完整中文覆盖（WOFF2 约 7.4MB，font-display:swap），不依赖外部字体请求。英文数字优先 Geist，中文回退 Noto Sans SC。没有图库品牌图片或商业字体。
 
 ## 开发
 
+前端：
+```
+cd frontend
 npm install
-npm run dev
-npm test
-npm run typecheck
-npm run build
+npm run dev        # Vite，/api 代理到 localhost:8080
+npm test           # node:test 纯函数/静态契约测试
+npm run typecheck  # vue-tsc
+npm run build      # 产出 frontend/dist
+```
 
-浏览器实测与设计依据见仓库 pipeline/runs/todo-day。此改造不包含部署、账号或飞书写回。
+后端：
+```
+cd backend
+go test ./...      # API 集成测试 + migration 回滚测试
+go run ./cmd/server -addr :8080 -db tododay.db -static ../frontend/dist
+```
+
+单进程即可运行：服务端托管前端构建产物并代理同源 API。浏览器实测与设计依据见仓库 pipeline/runs/todo-day。此改造不包含部署、通知或附件存储。
