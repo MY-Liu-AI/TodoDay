@@ -197,7 +197,7 @@ function printPage() {
 
 function goStats() {
   page.value = "stats";
-  refreshStats();
+  refreshStats(true);
 }
 
 function switchMode(v: "list" | "calendar") {

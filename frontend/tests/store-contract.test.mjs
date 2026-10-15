@@ -30,3 +30,16 @@ test("saveTask PATCH branch keeps optimistic snapshot + conflict handling", () =
   assert.match(body, /handleConflict\(e\)/);
   assert.match(body, /method: "PATCH"/);
 });
+
+test("stats refresh after a mutation is forced, not silently skipped", () => {
+  const copy = readFileSync(new URL("../src/store.ts", import.meta.url), "utf8");
+  const app = readFileSync(new URL("../src/App.vue", import.meta.url), "utf8");
+  // refreshStats 的守卫会在 statsLoaded 为真且未 force 时直接返回，
+  // 所以完成/编辑任务后的刷新必须带 force，否则热力图一直是旧数据。
+  assert.match(copy, /if \(!st\.workspace \|\| \(st\.statsLoaded && !force\)\) return;/);
+  const bare = copy.match(/if \(st\.statsLoaded\) refreshStats\(\);/g) || [];
+  assert.equal(bare.length, 0, "mutation-time refreshStats must pass force=true");
+  const forced = copy.match(/if \(st\.statsLoaded\) refreshStats\(true\);/g) || [];
+  assert.equal(forced.length, 2, "toggleTask and saveTask both force-refresh");
+  assert.match(app, /refreshStats\(true\)/);
+});

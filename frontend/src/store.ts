@@ -283,7 +283,7 @@ export async function saveTask(draft: Item) {
     });
     replaceItem(task);
     notify(C.saved);
-    if (st.statsLoaded) refreshStats();
+    if (st.statsLoaded) refreshStats(true);
   } catch (e) {
     if (handleConflict(e)) return true;
     if (prev) Object.assign(prev, prevSnapshot(draft.id));
@@ -314,7 +314,9 @@ export async function toggleTask(item: Item) {
     });
     replaceItem(task);
     notify(next ? C.completed : C.reopen);
-    if (st.statsLoaded) refreshStats();
+    // 必须 force：statsLoaded 一旦为 true，不强制就会直接 return，热力图
+    // 会一直显示打开统计页那一刻的旧数据（勾完看不到今天多了一格）。
+    if (st.statsLoaded) refreshStats(true);
   } catch (e) {
     const snap = prevSnapshot(item.id);
     Object.assign(item, snap);
