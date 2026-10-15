@@ -29,6 +29,19 @@
 - 生产无样本注入、无合成热力历史；统计来源标注为真实完成数据。
 - 测试：`npm test`（30 个 node:test：解析/排序/删除恢复/导入校验纯函数、日历网格、热力换算口径、AA 对比度、跨语言分类色、产品元数据、文档契约）；`npm run typecheck` 通过；`npm run build` 通过。
 
+**企业微信 AI 助手（assistant/，独立 Go 模块，2026-10-15 增量）**
+- 独立模块 `assistant`（module `assistant`，**仅标准库**，无第三方依赖），与 `backend/`、`frontend/` 并列；**未改动 backend 与 frontend 任何代码**。
+- 接入方式：企业微信**自建应用的「接收消息」回调**（`/wecom/callback`）。群机器人 webhook 是单向推送、无接收入口，因此不适用。
+- 加解密（`internal/wecom`）：签名 = 四个值字典序排序后 SHA1（GET 用 echostr、POST 用 Encrypt）；AES-256-CBC，IV = 密钥前 16 字节；`EncodingAESKey` 43 字符补 `=` 后 base64 解码为 32 字节；明文结构 `random(16)+len(4,大端)+msg+receiveid`；**PKCS#7 块大小为 32**；`receiveid` 必须等于 CorpID，否则拒绝。
+- 回调处理：GET 验证返回**明文** echostr（不加引号/BOM/换行）；POST 校验签名解密后**立刻回 `success`**，解析与建任务放后台 goroutine，完成后经 `cgi-bin/message/send` 主动推送回执（access_token 缓存，提前 5 分钟失效，42001 自动刷新重试一次）。
+- 解析（`internal/parse`）：优先 Kimi（Moonshot，OpenAI 兼容 `/chat/completions`，function calling 强制结构化输出，system prompt 注入当天日期与工作区时区）；未配置密钥、超时、出错或结果无内容时**自动退回规则解析**并记日志（移植前端 `parseInput`：中英文相对日期、`M月D日`/`M/D`、`#分组`、`!!!`/`!!`/`!` 三档优先级、默认分组规则一致）。
+- 数据通路（`internal/todoclient`）：HTTP 调用现有后端 API，复用服务端字段校验、工作区归属校验与 `client_id` 幂等；CSRF 头自动携带；401 自动重登一次并重试；403（配置问题）与 400（内容问题）分类成不同错误，回执文案指向不同排查方向。
+- 幂等：企业微信 `MsgId` 直接作为 `clientId`（前缀 `wx_`），重投不会产生重复任务；进程内另有 `MsgId` 去重缓存（上限 2000），避免重跑解析与重复回复。
+- 配置：全部经环境变量，启动时校验必填项并**只打印缺失的键名**（不打印值）。键名与默认值见 `assistant/.env.example` 与 `assistant/README.md`（`ASSISTANT_ADDR`、`WECOM_CORP_ID`/`WECOM_AGENT_ID`/`WECOM_SECRET`/`WECOM_TOKEN`/`WECOM_ENCODING_AES_KEY`、`TODO_API_BASE`/`TODO_USERNAME`/`TODO_PASSWORD`/`TODO_WORKSPACE_ID`、`KIMI_API_KEY`（或 `MOONSHOT_API_KEY`）/`KIMI_BASE_URL`/`ASSISTANT_MODEL`/`PARSE_TIMEOUT`）。
+- 测试：`cd assistant && go test ./... -count=1` 全部通过 —— 加解密用**企业微信官方的回调测试参数**做互操作验证（签名与解密都对齐官方，不只是自往返）；回调 `httptest` 端到端（GET 返回明文 echostr、POST 秒回 success 并投递消息、签名错误 403、外来 CorpID 403、非文本忽略）；解析表驱动（含闰年、时区差异、非法日期、AI 越界输出收敛）；编排（重投去重、空消息、记录失败、降级提示、发送失败不影响落库）；配置校验；TodoDay 客户端（401 重登、403/400 分类、不可达）。
+- **未实现**：不含部署（无 Dockerfile/systemd/CI）与内网穿透；不做查询/完成/删除/统计指令（一条消息 = 记一条任务）；固定单工作区，不支持多人绑定；无持久化队列（进程重启会丢未发出的回执，任务本身已落库）；无多轮对话；非文本消息忽略。
+- **尚未验证**：签约、保存回调地址、真实推送需要企业凭据与公网 HTTPS 地址，必须实测一次才算接通；仓库里的测试只覆盖加解密与编排逻辑。
+
 ## 环境变量与启动（名称，非密钥值）
 
 | 变量 | 默认 | 用途 |

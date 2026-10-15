@@ -6,3 +6,7 @@ frontend/dist
 *.db-shm
 *.db-wal
 backend/server
+# 助手模块：编译产物与真实配置（.env.example 要提交，.env 不能）
+assistant/assistant
+assistant/assistant.exe
+assistant/.env
