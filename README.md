@@ -21,6 +21,14 @@
 - 手动排序支持同分组内 pointer 拖拽与上下按钮，其他排序自动隐藏拖拽入口
 - 完成 / 撤销完成、删除 / 撤销删除、清理已完成（同样可撤销）；只保留最近一批删除的撤销
 
+### 🍅 番茄专注
+
+- 主页列出**今天要处理的事**（今天截止 + 逾期未完成），选一件绑定，或不绑定直接开始
+- 固定 **25 分钟倒计时**：开始 / 暂停 / 继续 / 放弃；走完铃响并记一个番茄；中途放弃不算番茄但专注时长仍计入（不足 1 分钟不记）
+- 倒计时按结束时刻推算，后台标签节流不漂；标签页标题同步显示剩余时间，侧栏显示剩余分钟
+- **今日番茄数、今日 / 本周 / 本月专注时长、近 4 周每日柱图、今天的专注记录**全部来自服务端 `focus_sessions`，按工作区时区归属到番茄结束那一天；记录失败时提示并可重试，不伪造已统计
+- 任务标题在开始时快照，之后改名或删除不影响历史统计
+
 ### 📊 统计
 
 - **18 周完成热力格**：一格一天，悬停显示当天完成数，颜色越深越多
@@ -44,14 +52,15 @@
 frontend/   Vue 3 + Vite + TypeScript（vue-tsc 严格模式）
   src/App.vue        布局、模式切换、反馈
   src/store.ts       响应式状态、乐观更新/回滚、409 冲突替换、legacy 导入
+  src/focus.ts       番茄计时器状态机 + 专注记录/统计读取
   src/api.ts         REST 客户端（超时、CSRF 头、错误携带服务端最新任务）
   src/components/    AuthView / CalendarView / Calendar / List / TaskDialog
-                     Heat / Recap / Stats / Icon
+                     FocusView / Heat / Recap / Stats / Icon
   src/lib/           解析、分桶、日期网格、热力口径、导出、音效（纯函数）
 backend/    Go 1.26（net/http，Go 1.22 路由）
   cmd/server/        入口：优雅退出、内嵌时区库
-  internal/api/      会话认证、CSRF/安全头/限流、任务与统计 REST、SPA 托管
-  internal/store/    SQLite（WAL）连接、embedded migration、users/tasks/task_events
+  internal/api/      会话认证、CSRF/安全头/限流、任务与统计 REST、番茄专注 REST、SPA 托管
+  internal/store/    SQLite（WAL）连接、embedded migration、users/tasks/task_events/focus_sessions
 ```
 
 设计要点：
@@ -94,8 +103,8 @@ cd frontend && npm run dev                   # 终端 2 → http://localhost:517
 ## 测试
 
 ```bash
-cd backend && go test ./internal/...   # API 集成测试（授权/幂等/409/软删恢复/导入去重）+ migration 回滚
-cd frontend && npm test                # 32 个 node:test：解析/排序/热力口径/对比度/写路径契约/文档契约
+cd backend && go test ./internal/...   # API 集成测试（授权/幂等/409/软删恢复/导入去重/番茄记录与统计）+ migration 回滚
+cd frontend && npm test                # 39 个 node:test：解析/排序/热力口径/对比度/写路径契约/番茄契约/文档契约
 cd frontend && npm run typecheck       # vue-tsc，0 错误
 ```
 

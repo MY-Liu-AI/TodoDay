@@ -17,11 +17,11 @@ func TestMigrateAndRollback(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 	var version int
-	if err := st.DB().QueryRowContext(ctx, `SELECT version FROM schema_migrations`).Scan(&version); err != nil {
+	if err := st.DB().QueryRowContext(ctx, `SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
 		t.Fatalf("read version: %v", err)
 	}
-	if version != 1 {
-		t.Fatalf("expected version 1, got %d", version)
+	if version != 2 {
+		t.Fatalf("expected latest version 2, got %d", version)
 	}
 
 	// Re-running migrations is a no-op.

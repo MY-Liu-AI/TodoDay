@@ -13,6 +13,10 @@ const paths: Record<string, string> = {
   close: "m6 6 12 12M6 18 18 6",
   download: "M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5",
   help: "M9 8a3 3 0 1 1 4 3c-1 1-1 2-1 3M12 17h.01M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0",
+  timer: "M12 8v5l3 2M12 3h0M5 12a7 7 0 1 0 14 0 7 7 0 0 0-14 0ZM10 2h4",
+  play: "M7 5v14l11-7Z",
+  pause: "M8 5v14M16 5v14",
+  stop: "M6 6h12v12H6Z",
 };
 
 defineProps<{ name: string; size?: number }>();

@@ -41,8 +41,10 @@ import Recap from "./components/Recap.vue";
 import Stats from "./components/Stats.vue";
 import TaskDialog from "./components/TaskDialog.vue";
 import AuthView from "./components/AuthView.vue";
+import FocusView from "./components/FocusView.vue";
+import { fs } from "./focus";
 
-const page = ref<"tasks" | "stats">("tasks");
+const page = ref<"tasks" | "focus" | "stats">("tasks");
 const mode = ref<"list" | "calendar">("calendar");
 const filter = ref("all");
 const group = ref("");
@@ -235,6 +237,11 @@ initSession();
           {{ C.plan }}
           <span>{{ open }}</span>
         </button>
+        <button :class="page === 'focus' ? 'is-active' : ''" @click="page = 'focus'">
+          <Icon name="timer" />
+          {{ C.focus }}
+          <span v-if="fs.phase === 'running' || fs.phase === 'paused'">{{ Math.ceil(fs.remaining / 60) }}'</span>
+        </button>
         <button :class="page === 'stats' ? 'is-active' : ''" @click="goStats">
           <Icon name="stats" />
           {{ C.insights }}
@@ -277,11 +284,11 @@ initSession();
     <main id="workspace" class="planner-workspace">
       <header class="workspace-header">
         <div>
-          <div class="overline">PERSONAL / {{ page === "tasks" ? "PLANNER" : "INSIGHTS" }}</div>
-          <h1>{{ page === "tasks" ? C.myTasks : C.insights }}</h1>
-          <p>{{ page === "tasks" ? C.subtitle : C.statsSubtitle }}</p>
+          <div class="overline">PERSONAL / {{ page === "tasks" ? "PLANNER" : page === "focus" ? "FOCUS" : "INSIGHTS" }}</div>
+          <h1>{{ page === "tasks" ? C.myTasks : page === "focus" ? C.focus : C.insights }}</h1>
+          <p>{{ page === "tasks" ? C.subtitle : page === "focus" ? C.focusSubtitle : C.statsSubtitle }}</p>
         </div>
-        <button class="primary-button new-task" @click="newTask(mode === 'calendar' ? calendarDay : daySel)">
+        <button v-if="page !== 'focus'" class="primary-button new-task" @click="newTask(mode === 'calendar' ? calendarDay : daySel)">
           <Icon name="plus" />
           {{ C.newTask }}
         </button>
@@ -452,6 +459,7 @@ initSession();
           </aside>
         </div>
       </template>
+      <FocusView v-else-if="page === 'focus'" />
       <div v-else class="insights-layout">
         <section>
           <p class="history-note">{{ C.historyNote }}</p>

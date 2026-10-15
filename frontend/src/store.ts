@@ -185,7 +185,14 @@ export async function logout() {
     st.deleted = null;
     st.activity = {};
     st.statsLoaded = false;
+    onLogout.forEach((fn) => fn());
   }
+}
+
+/* 其他模块（如番茄专注）在登出时需要清自己的状态；避免循环 import，用回调注册。 */
+const onLogout: (() => void)[] = [];
+export function registerLogoutHook(fn: () => void) {
+  onLogout.push(fn);
 }
 
 function onAuthLost(e: unknown): boolean {

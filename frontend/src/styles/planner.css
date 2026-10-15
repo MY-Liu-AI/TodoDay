@@ -1142,6 +1142,222 @@ button:disabled {
 .feedback-toast .icon-button {
   color: inherit;
 }
+/* ── 番茄专注 ─────────────────────────────────────────────────────────── */
+.focus-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 40px;
+  margin-top: 32px;
+}
+.focus-layout > section {
+  min-width: 0;
+}
+.focus-timer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 32px 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+}
+.focus-ring {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+.focus-ring svg {
+  display: block;
+  transform: rotate(-90deg);
+}
+.focus-ring .track {
+  fill: none;
+  stroke: var(--line-soft);
+  stroke-width: 8;
+}
+.focus-ring .fill {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 8;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.9s linear;
+}
+.focus-timer.is-paused .fill {
+  stroke: var(--muted);
+}
+.focus-timer.is-done .fill {
+  stroke: var(--accent);
+}
+.focus-clock {
+  position: absolute;
+  font-family: var(--mono);
+  font-size: 44px;
+  font-weight: 500;
+  letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  transform: translateY(-10px);
+}
+.focus-task-name {
+  position: absolute;
+  top: calc(50% + 24px);
+  max-width: 150px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.focus-timer.is-done .focus-task-name {
+  color: var(--accent);
+  font-weight: 600;
+}
+.focus-hint {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0;
+}
+.focus-controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 40px;
+}
+.focus-pending {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--neg);
+  margin: 0;
+}
+.focus-picker {
+  margin-top: 32px;
+}
+.focus-task-list {
+  display: grid;
+  gap: 4px;
+}
+.focus-task {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  min-height: 44px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: none;
+  color: var(--ink);
+  text-align: left;
+  font-size: 13px;
+  transition:
+    background 0.16s var(--ease),
+    border-color 0.16s var(--ease);
+}
+.focus-task:hover:not(:disabled) {
+  background: var(--raised);
+}
+.focus-task.is-picked {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.focus-task:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.focus-task.is-done .focus-task-title {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+.focus-task .event-dot {
+  width: 8px;
+  height: 8px;
+  border: 0;
+  background: var(--event-line, var(--muted));
+}
+.focus-task-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.focus-task .task-group-label {
+  font-size: 11px;
+  flex: none;
+}
+.focus-task-state {
+  flex: none;
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--mono);
+}
+.focus-task.is-picked .focus-task-state {
+  color: var(--accent);
+}
+.focus-stats {
+  margin-bottom: 24px;
+}
+.focus-stats .n {
+  font-size: 15px;
+  white-space: nowrap;
+}
+.focus-daily {
+  padding-inline: 0;
+}
+.focus-daily .d {
+  min-width: 0;
+}
+.focus-daily .b {
+  min-height: 2px;
+}
+.focus-daily .l {
+  font-size: 9px;
+}
+.focus-side .history-note {
+  margin: 8px 0 24px;
+}
+.focus-sessions {
+  display: grid;
+  gap: 2px;
+}
+.focus-session {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line-soft);
+  font-size: 12px;
+}
+.focus-session-time {
+  font-family: var(--mono);
+  color: var(--muted);
+  flex: none;
+  width: 44px;
+}
+.focus-session-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.focus-session-dur {
+  font-family: var(--mono);
+  color: var(--muted);
+  flex: none;
+}
+.focus-session-badge {
+  flex: none;
+  font-size: 11px;
+  color: var(--muted);
+}
+.focus-session.is-abandoned .focus-session-badge {
+  color: var(--faint);
+}
 .skip-link {
   position: fixed;
   left: 16px;
@@ -1421,6 +1637,13 @@ button:disabled {
   .insights-layout {
     grid-template-columns: 1fr;
     gap: 24px;
+  }
+  .focus-layout {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+  .focus-clock {
+    font-size: 36px;
   }
   .task-dialog {
     padding: 20px;

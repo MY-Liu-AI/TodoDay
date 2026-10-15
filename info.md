@@ -22,22 +22,24 @@
 - 完成/撤销完成、删除/撤销删除、清理已完成/撤销；只保留最近一批删除的撤销。
 - 手动排序支持同日期分组内pointer拖拽与上下按钮；其他排序隐藏拖动入口。
 - 统计保留 18 周热力、分组读数、近 7 天完成柱图；与清单数据同一口径（task_events）。
+- 番茄专注（侧栏「我的计划」之下）：列出今天要处理的事（今天截止 + 逾期未完成），可绑定一件或自由开始；固定 25 分钟倒计时，开始/暂停/继续/放弃；走完记一个番茄，中途放弃只计时长（不足 1 分钟不记）。今日番茄数、今日/本周/本月专注时长、近 4 周每日柱图、今日记录均来自服务端 focus_sessions，按工作区时区归属到结束当天；写入失败提示并可重试。
 - CSV、Canvas海报、打印/PDF保留在统计页。图片/PDF由用户触发，不自动外发。
 
 ## 结构
 
 frontend/src/App.vue：共享状态（store.ts）、布局、模式、反馈与导入弹窗。
 frontend/src/store.ts：响应式状态、乐观更新/回滚、409 冲突替换、legacy 导入。
+frontend/src/focus.ts：番茄计时器状态机（idle/running/paused/done）、专注记录写入与重试、统计读取。
 frontend/src/api.ts：REST 客户端（超时、CSRF 头、ApiError 带服务端最新任务）。
 frontend/src/copy.ts：本地化 UI 文案。
-frontend/src/components/：AuthView、CalendarView（独立月历与日议程）、Calendar（小月历筛选）、TaskDialog（可访问新建/编辑表单）、List（列表、勾选、拖拽及键盘排序）、Heat/Recap/Stats（统计，同源数据）、Icon。
+frontend/src/components/：AuthView、CalendarView（独立月历与日议程）、Calendar（小月历筛选）、TaskDialog（可访问新建/编辑表单）、List（列表、勾选、拖拽及键盘排序）、FocusView（番茄专注页）、Heat/Recap/Stats（统计，同源数据）、Icon。
 frontend/src/lib/model.js：搜索、排序、日期网格纯函数（validState 仅用于 legacy 导入校验）。
 frontend/src/lib/todo.js：解析、分桶、日期标签（无样本注入）。
 frontend/src/lib/heat.js：task_events 聚合的换算与统计口径。
 frontend/src/lib/palette.js / export.ts / fx.ts：中英分类色映射、CSV/海报导出、音效触感。
 backend/cmd/server/main.go：服务入口（优雅退出、内嵌时区库）。
-backend/internal/api/：HTTP 路由、会话认证、CSRF/安全头/限流、任务与统计接口、静态托管 SPA。
-backend/internal/store/：SQLite 连接（WAL、单写）、embedded migration、users/sessions、tasks、task_events 聚合。
+backend/internal/api/：HTTP 路由、会话认证、CSRF/安全头/限流、任务与统计接口、番茄专注接口、静态托管 SPA。
+backend/internal/store/：SQLite 连接（WAL、单写）、embedded migration、users/sessions、tasks、task_events 聚合、focus_sessions 记录与聚合。
 frontend/src/styles/planner.css：浅色工作台样式，沿用 kit/tool/app 基础，可选深色。
 
 ## 字体与许可

@@ -12,6 +12,7 @@
 - 任务 API：listTasks、createTask（client_id 幂等键）、updateTask / setCompletion（version 乐观并发，409 携带最新任务）、reorderTasks（原子事务）、deleteTasks（软删 + task_events）、restoreTasks（服务端恢复）、getActivity（task_events 按工作区时区聚合）、importTasks（用户确认后导入旧 localStorage）。
 - 前端：frontend/ 为 Vue 3 + Vite + TypeScript，页面与原模板一致；store 乐观更新 + 失败回滚 + 409 以服务端版本替换；legacy 导入需用户在弹窗中明确同意。
 - 统计同源：热力格、连续天数、近 7 天完成全部来自同一 task_events 聚合（`src/lib/heat.js` 只做换算），无合成历史。
+- 番茄专注（2026-10-15）：`focus_sessions` 表（migration 0002）+ `POST /focus/sessions`（client_id 幂等、completed 需满计划时长、task_id 校验归属）+ `GET /focus/stats`（今日/本周/本月/每日按工作区时区以结束时间归属）。前端计时本地跑、结束才写服务端，写失败保留重试，统计只读服务端。
 - 未接入（如实列出）：无对象存储/附件上传（产品本就没有该功能，不伪造）；无通知推送；单机 SQLite，未接外部数据库服务；未部署上线。详见 DELIVERY.md。
 
 ## 1. 找到所有本地替身

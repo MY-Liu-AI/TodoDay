@@ -365,6 +365,95 @@ func wf(format string, args ...any) string {
 	return fmt.Sprintf(format, args...)
 }
 
+func TestFocusSessionsAndStats(t *testing.T) {
+	e := newTestEnv(t)
+	e.register("kate", "password123")
+	wid := e.wid()
+
+	_, task := e.do("POST", wf("/api/workspaces/%v/tasks", wid), map[string]any{"t": "写报告", "p": 1, "g": "工作"})
+	tid := task["id"].(string)
+
+	// Empty stats before any session.
+	resp, st := e.do("GET", wf("/api/workspaces/%v/focus/stats", wid), nil)
+	if resp.StatusCode != http.StatusOK || st["todayAgg"].(map[string]any)["pomodoros"].(float64) != 0 {
+		t.Fatalf("initial stats: %d %v", resp.StatusCode, st)
+	}
+
+	now := time.Now().UnixMilli()
+	// A full pomodoro bound to a task, with a clientId for idempotency.
+	resp, out := e.do("POST", wf("/api/workspaces/%v/focus/sessions", wid), map[string]any{
+		"taskId": tid, "plannedSec": 1500, "durationSec": 1500, "status": "completed",
+		"startedAt": now - 1500_000, "endedAt": now, "clientId": "f-1",
+	})
+	if resp.StatusCode != http.StatusCreated || out["taskTitle"] != "写报告" {
+		t.Fatalf("create: %d %v", resp.StatusCode, out)
+	}
+	id := out["id"].(float64)
+
+	// Replay with the same clientId → same row, no duplicate.
+	resp, replay := e.do("POST", wf("/api/workspaces/%v/focus/sessions", wid), map[string]any{
+		"taskId": tid, "plannedSec": 1500, "durationSec": 1500, "status": "completed",
+		"startedAt": now - 1500_000, "endedAt": now, "clientId": "f-1",
+	})
+	if resp.StatusCode != http.StatusCreated || replay["id"].(float64) != id {
+		t.Fatalf("idempotent replay: %d %v", resp.StatusCode, replay)
+	}
+
+	// An abandoned session adds time but not a tomato.
+	resp, _ = e.do("POST", wf("/api/workspaces/%v/focus/sessions", wid), map[string]any{
+		"plannedSec": 1500, "durationSec": 300, "status": "abandoned", "endedAt": now,
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("abandoned: %d", resp.StatusCode)
+	}
+
+	// "completed" without running the planned length is rejected.
+	resp, _ = e.do("POST", wf("/api/workspaces/%v/focus/sessions", wid), map[string]any{
+		"plannedSec": 1500, "durationSec": 100, "status": "completed", "endedAt": now,
+	})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("short completed should be 400, got %d", resp.StatusCode)
+	}
+
+	// A task id from another workspace is refused.
+	e.do("POST", "/api/auth/logout", nil)
+	e.register("leo", "password123")
+	wid2 := e.wid()
+	resp, _ = e.do("POST", wf("/api/workspaces/%v/focus/sessions", wid2), map[string]any{
+		"taskId": tid, "plannedSec": 1500, "durationSec": 1500, "status": "completed", "endedAt": now,
+	})
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("foreign task should be 404, got %d", resp.StatusCode)
+	}
+	resp, _ = e.do("GET", wf("/api/workspaces/%v/focus/stats", wid), nil)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-workspace stats should be 403, got %d", resp.StatusCode)
+	}
+
+	// Back as kate: today = 1 pomodoro, 1800 s; week/month include it; one
+	// session list entry per recorded row (2), newest first.
+	e.do("POST", "/api/auth/logout", nil)
+	e.do("POST", "/api/auth/login", map[string]string{"username": "kate", "password": "password123"})
+	_, st = e.do("GET", wf("/api/workspaces/%v/focus/stats?days=30", wid), nil)
+	today := st["todayAgg"].(map[string]any)
+	if today["pomodoros"].(float64) != 1 || today["seconds"].(float64) != 1800 {
+		t.Fatalf("today agg: %v", today)
+	}
+	week := st["week"].(map[string]any)
+	month := st["month"].(map[string]any)
+	if week["seconds"].(float64) != 1800 || month["pomodoros"].(float64) != 1 {
+		t.Fatalf("week/month agg: %v %v", week, month)
+	}
+	sessions := st["sessions"].([]any)
+	if len(sessions) != 2 || sessions[0].(map[string]any)["status"] != "abandoned" {
+		t.Fatalf("sessions: %v", sessions)
+	}
+	daily := st["daily"].(map[string]any)
+	if daily[st["today"].(string)].(map[string]any)["seconds"].(float64) != 1800 {
+		t.Fatalf("daily: %v", daily)
+	}
+}
+
 func TestStaticSPAFallbackServesIndexWithoutRedirect(t *testing.T) {
 	st, err := store.Open(":memory:")
 	if err != nil {

@@ -55,6 +55,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/workspaces/{wid}/tasks/restore", s.withAuth(s.withWorkspace(s.restoreTasks)))
 	s.mux.HandleFunc("POST /api/workspaces/{wid}/tasks/import", s.withAuth(s.withWorkspace(s.importTasks)))
 	s.mux.HandleFunc("GET /api/workspaces/{wid}/activity", s.withAuth(s.withWorkspace(s.activity)))
+
+	// 番茄专注：记录一次专注、读取今日/本周/本月/每日统计。
+	s.mux.HandleFunc("POST /api/workspaces/{wid}/focus/sessions", s.withAuth(s.withWorkspace(s.createFocusSession)))
+	s.mux.HandleFunc("GET /api/workspaces/{wid}/focus/stats", s.withAuth(s.withWorkspace(s.focusStats)))
 }
 
 // Handler wraps the mux with security and panic-recovery middleware.
