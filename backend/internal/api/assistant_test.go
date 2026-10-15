@@ -266,50 +266,15 @@ func TestAssistantConfigUpdateWithCorrectVersion(t *testing.T) {
 	}
 }
 
-// 另一名成员（非 owner）不能改配置，也不能取明文凭据。
-func TestAssistantConfigIsOwnerOnly(t *testing.T) {
-	e := newTestEnv(t)
-	e.withEncryption(t)
-
-	// owner 建工作区并写好配置。
-	e.register("owner1", "password123")
-	wid := e.wid()
-	e.putAssistant(wid, map[string]any{
-		"enabled": true, "botId": "B1", "botSecret": "s", "kimiApiKey": "",
-		"kimiBase": "", "kimiModel": "", "version": 0,
-	})
-
-	// 另一账号加入同一工作区，角色是 member。
-	e.do("POST", "/api/auth/logout", nil)
-	e.register("member1", "password123")
-	mid := e.wid()
-	if mid == wid {
-		t.Skip("测试环境下两个账号拿到了同一个工作区，无法构造非 owner 场景")
-	}
-
-	// 非 owner 访问自己的工作区：他是 owner，所以这里应当成功 —— 用来
-	// 确认角色判断读的是「该工作区的角色」而不是全局。
-	resp, _ := e.getAssistant(mid)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("自己的工作是 owner，应可读：%d", resp.StatusCode)
-	}
-	// 但读别人的工作区应当是 403（不是成员）。
-	resp, _ = e.getAssistant(wid)
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("跨工作区应 403，得到 %d", resp.StatusCode)
-	}
-	resp, _ = e.getCredentials(wid)
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("跨工作区取凭据应 403，得到 %d", resp.StatusCode)
-	}
-	resp, _ = e.putAssistant(wid, map[string]any{
-		"enabled": true, "botId": "HACK", "botSecret": "", "kimiApiKey": "",
-		"kimiBase": "", "kimiModel": "", "version": 0,
-	})
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("跨工作区写配置应 403，得到 %d", resp.StatusCode)
-	}
-}
+// 角色相关的两条 403 在 assistant_member_test.go 里：
+//
+//	TestAssistantConfigMemberCannotWriteOrReadSecrets —— 同一工作区的普通成员
+//	TestAssistantConfigCrossWorkspaceForbidden      —— 根本不是成员
+//
+// 这里原先放着一个叫 TestAssistantConfigIsOwnerOnly 的测试，但它实际只测了
+// 跨工作区，而那条 403 是 withWorkspace 的成员校验挡下的、与角色判断无关；
+// 名字会让人以为 owner 边界已被覆盖（删掉 withWorkspaceOwner 里的角色检查，
+// 它照样全绿）。发现后已由上面两个测试取代，不再重复。
 
 // 未登录一律 401。
 func TestAssistantConfigRequiresAuth(t *testing.T) {
