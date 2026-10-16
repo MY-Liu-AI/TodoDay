@@ -60,6 +60,11 @@ func main() {
 	}
 
 	srv := api.NewServer(st, *staticDir)
+
+	// 恢复所有「已启用」工作区的助手连接；进程退出时统一断开。
+	srv.SyncAssistants(context.Background())
+	defer srv.CloseAssistants()
+
 	httpSrv := &http.Server{
 		Addr:              *addr,
 		Handler:           srv.Handler(),

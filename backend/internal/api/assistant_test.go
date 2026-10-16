@@ -55,7 +55,7 @@ func TestAssistantConfigMasksSecrets(t *testing.T) {
 	const kimiKey = "sk-SECRET-KIMI-VALUE"
 
 	resp, out := e.putAssistant(wid, map[string]any{
-		"enabled": true, "botId": "BOTID-1",
+		"botId": "BOTID-1",
 		"botSecret": botSecret, "kimiApiKey": kimiKey,
 		"kimiBase": "https://api.moonshot.cn/v1", "kimiModel": "moonshot-v1-8k",
 		"version": 0,
@@ -104,7 +104,7 @@ func TestAssistantCredentialsReturnsPlaintext(t *testing.T) {
 	const botSecret = "bot-secret-xyz"
 	const kimiKey = "sk-abc123"
 	e.putAssistant(wid, map[string]any{
-		"enabled": true, "botId": "B1", "botSecret": botSecret, "kimiApiKey": kimiKey,
+		"botId": "B1", "botSecret": botSecret, "kimiApiKey": kimiKey,
 		"kimiBase": "", "kimiModel": "", "version": 0,
 	})
 
@@ -118,7 +118,7 @@ func TestAssistantCredentialsReturnsPlaintext(t *testing.T) {
 	if out["kimiApiKey"] != kimiKey {
 		t.Fatalf("kimiApiKey 未正确解密：%v", out["kimiApiKey"])
 	}
-	if out["botId"] != "B1" || out["enabled"] != true {
+	if out["botId"] != "B1" {
 		t.Fatalf("其余字段不正确：%v", out)
 	}
 }
@@ -141,7 +141,7 @@ func TestAssistantConfigRefusesSecretsWithoutKey(t *testing.T) {
 	wid := e.wid()
 
 	resp, out := e.putAssistant(wid, map[string]any{
-		"enabled": true, "botId": "B1", "botSecret": "plaintext-should-not-be-stored",
+		"botId": "B1", "botSecret": "plaintext-should-not-be-stored",
 		"kimiApiKey": "", "kimiBase": "", "kimiModel": "", "version": 0,
 	})
 	if resp.StatusCode != http.StatusBadRequest {
@@ -168,7 +168,7 @@ func TestAssistantConfigAllowsNonSecretWithoutKey(t *testing.T) {
 	wid := e.wid()
 
 	resp, out := e.putAssistant(wid, map[string]any{
-		"enabled": true, "botId": "B1", "botSecret": "", "kimiApiKey": "",
+		"botId": "B1", "botSecret": "", "kimiApiKey": "",
 		"kimiBase": "", "kimiModel": "", "version": 0,
 	})
 	if resp.StatusCode != http.StatusOK {
@@ -185,13 +185,13 @@ func TestAssistantConfigKeepsSecretWhenBlank(t *testing.T) {
 
 	const botSecret = "keep-me"
 	e.putAssistant(wid, map[string]any{
-		"enabled": true, "botId": "B1", "botSecret": botSecret,
+		"botId": "B1", "botSecret": botSecret,
 		"kimiApiKey": "k1", "kimiBase": "", "kimiModel": "", "version": 0,
 	})
 
 	// 只改开关与模型，secret 字段留空。
 	resp, out := e.putAssistant(wid, map[string]any{
-		"enabled": false, "botId": "B1", "botSecret": "",
+		"botId": "B1", "botSecret": "",
 		"kimiApiKey": "", "kimiBase": "", "kimiModel": "moonshot-v1-32k", "version": 1,
 	})
 	if resp.StatusCode != http.StatusOK {
@@ -219,14 +219,14 @@ func TestAssistantConfigVersionConflict(t *testing.T) {
 	wid := e.wid()
 
 	e.putAssistant(wid, map[string]any{
-		"enabled": true, "botId": "B1", "botSecret": "s", "kimiApiKey": "",
+		"botId": "B1", "botSecret": "s", "kimiApiKey": "",
 		"kimiBase": "", "kimiModel": "", "version": 0,
 	})
 
 	// 用过期 version 再存一次。当前是 1；0 是「允许新建/覆盖」的特殊值，
 	// 所以要用一个确实对不上的数。
 	resp, out := e.putAssistant(wid, map[string]any{
-		"enabled": true, "botId": "B2", "botSecret": "", "kimiApiKey": "",
+		"botId": "B2", "botSecret": "", "kimiApiKey": "",
 		"kimiBase": "", "kimiModel": "", "version": 99,
 	})
 	if resp.StatusCode != http.StatusConflict {
@@ -246,19 +246,19 @@ func TestAssistantConfigUpdateWithCorrectVersion(t *testing.T) {
 	wid := e.wid()
 
 	_, first := e.putAssistant(wid, map[string]any{
-		"enabled": true, "botId": "B1", "botSecret": "", "kimiApiKey": "",
+		"botId": "B1", "botSecret": "", "kimiApiKey": "",
 		"kimiBase": "", "kimiModel": "", "version": 0,
 	})
 	v := int64(first["version"].(float64))
 
 	resp, out := e.putAssistant(wid, map[string]any{
-		"enabled": false, "botId": "B2", "botSecret": "", "kimiApiKey": "",
+		"botId": "B2", "botSecret": "", "kimiApiKey": "",
 		"kimiBase": "https://x", "kimiModel": "m", "version": v,
 	})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("正确版本应能更新：%d %v", resp.StatusCode, out)
 	}
-	if out["botId"] != "B2" || out["enabled"] != false {
+	if out["botId"] != "B2" {
 		t.Fatalf("更新未生效：%v", out)
 	}
 	if out["version"].(float64) != float64(v+1) {
@@ -303,7 +303,7 @@ func TestAssistantConfigRejectsUnknownFields(t *testing.T) {
 	wid := e.wid()
 
 	body, _ := json.Marshal(map[string]any{
-		"enabled": true, "botId": "B", "botSecret": "", "kimiApiKey": "",
+		"botId": "B", "botSecret": "", "kimiApiKey": "",
 		"kimiBase": "", "kimiModel": "", "version": 0,
 		"typoField": "x",
 	})
@@ -330,7 +330,7 @@ func TestAssistantConfigRequiresCSRFHeader(t *testing.T) {
 	e.register("leo", "password123")
 	wid := e.wid()
 
-	body, _ := json.Marshal(map[string]any{"enabled": true, "botId": "", "version": 0})
+	body, _ := json.Marshal(map[string]any{"botId": "", "version": 0})
 	req, _ := http.NewRequest("PUT", e.srv.URL+wf("/api/workspaces/%v/assistant", wid), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	for name, val := range e.cj {

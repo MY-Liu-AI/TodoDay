@@ -336,7 +336,13 @@ func (c *Client) Reply(ctx context.Context, reqID, content string) error {
 	if conn == nil {
 		return errors.New("长连接当前不可用")
 	}
-	return c.write(ctx, conn, NewTextReply(reqID, content))
+	if err := c.write(ctx, conn, NewMarkdownReply(reqID, content)); err != nil {
+		return err
+	}
+	// 成功写出回执也记一笔：回复被企业微信静默丢弃时，只有这行能证明
+	// 「我方确实发过」，否则排查会误以为回执压根没走。
+	log.Printf("aibot: 已回复 req_id=%s（%d 字）", reqID, len([]rune(content)))
+	return nil
 }
 
 // write 串行化写操作：gorilla 不允许并发写同一个连接。

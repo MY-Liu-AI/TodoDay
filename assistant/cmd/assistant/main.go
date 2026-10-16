@@ -17,7 +17,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -76,7 +75,7 @@ func main() {
 		kimi = parse.NewKimi(creds.KimiKey, creds.KimiBase, creds.Model, cfg.ParseTimeout)
 		log.Printf("AI 解析已启用：%s @ %s", creds.Model, creds.KimiBase)
 	} else {
-		log.Printf("未配置 Kimi 密钥，全部使用规则解析")
+		log.Printf("未配置 Kimi 密钥：收到消息会提示先配置 AI 解析，不做关键词猜测")
 	}
 	parser := parse.NewParser(kimi, loc)
 
@@ -112,7 +111,7 @@ func main() {
 		}
 		return c.BotID, c.BotSecret, nil
 	})
-	handler := bot.New(parser, todo, client, kimi != nil)
+	handler := bot.New(parser, todo, client)
 	client.SetCallback(&botCallback{handler: handler})
 
 	// 健康检查端口。长连接模式下它不是消息入口，仅供探活使用。
@@ -199,16 +198,16 @@ func healthServer(ctx context.Context, addr string) {
 func runRecordTest(ctx context.Context, parser *parse.Parser, recorder interface {
 	CreatePlan(context.Context, parse.Plan, string) error
 }, text string) error {
-	plan, source := parser.Parse(ctx, text)
-	if strings.TrimSpace(plan.Title) == "" {
-		return fmt.Errorf("没能从 %q 里解析出任务内容", text)
+	plan, err := parser.Parse(ctx, text)
+	if err != nil {
+		return err
 	}
 	clientID := fmt.Sprintf("manual-%d", time.Now().Unix())
 	if err := recorder.CreatePlan(ctx, plan, clientID); err != nil {
 		return err
 	}
-	log.Printf("已记录：%s ｜ 日期 %s ｜ 分组 %s ｜ 优先级 %d（解析来源：%s）",
-		plan.Title, dueOrNone(plan.Due), plan.Group, plan.Priority, source)
+	log.Printf("已记录：%s ｜ 日期 %s ｜ 分组 %s ｜ 优先级 %d（AI 解析）",
+		plan.Title, dueOrNone(plan.Due), plan.Group, plan.Priority)
 	return nil
 }
 

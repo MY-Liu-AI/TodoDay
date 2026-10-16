@@ -2,34 +2,21 @@ package parse
 
 import (
 	"context"
-	"log"
+	"fmt"
 	"strings"
 	"time"
 )
 
-// Source 说明结果来自哪条路径。写进回执文案，对用户透明，也便于排查
-// 「为什么这句没听懂」。
-type Source string
-
-const (
-	SourceKimi Source = "kimi"
-	SourceRule Source = "rule"
-)
-
-// Parser 组合 Kimi 与规则解析。
+// Parser 用 AI（Kimi）把一句话解析成结构化任务字段。
 //
-// 降级边界（任一情况都退回规则解析）：
-//   - 未配置 API key
-//   - 调用出错、超时
-//   - 响应里没有可用的任务内容
-//
-// 换句话说：AI 是加速器，不是单点。没有它服务照样能用。
+// 不再有关键词兜底：未配置 API key 或调用失败时直接返回 error，由编排层
+// 如实告知用户——不静默成功、不退回规则解析。
 type Parser struct {
 	kimi *Kimi // 为 nil 表示未配置
 	loc  *time.Location
 }
 
-// NewParser 构造解析器。kimi 为 nil 时全部走规则解析。
+// NewParser 构造解析器。kimi 为 nil 时 Parse 会返回「未配置 AI 解析」错误。
 func NewParser(kimi *Kimi, loc *time.Location) *Parser {
 	if loc == nil {
 		loc = time.UTC
@@ -40,18 +27,12 @@ func NewParser(kimi *Kimi, loc *time.Location) *Parser {
 // Location 返回工作区时区，供回执文案复用。
 func (p *Parser) Location() *time.Location { return p.loc }
 
-// Parse 解析一句话，返回结果与来源。
-func (p *Parser) Parse(ctx context.Context, text string) (Plan, Source) {
-	now := time.Now()
-	if p.kimi != nil {
-		plan, err := p.kimi.Parse(ctx, text, now, p.loc)
-		if err == nil {
-			return plan, SourceKimi
-		}
-		// 失败要记日志：静默降级会让人以为 AI 在正常工作。
-		log.Printf("parse: Kimi 解析失败，改用规则解析：%v", err)
+// Parse 用 AI 解析一句话。未配置或调用失败时返回 error，不再降级。
+func (p *Parser) Parse(ctx context.Context, text string) (Plan, error) {
+	if p.kimi == nil {
+		return Plan{}, fmt.Errorf("未配置 AI 解析")
 	}
-	return ParseRule(text, now, p.loc), SourceRule
+	return p.kimi.Parse(ctx, text, time.Now(), p.loc)
 }
 
 // IsEmpty 判断文本是否没有任何可记录的内容。

@@ -20,7 +20,7 @@ func TestAssistantConfigRevokeSecrets(t *testing.T) {
 	const botSecret = "SECRET-TO-BE-REVOKED"
 	const kimiKey = "sk-KIMI-TO-BE-REVOKED"
 	if resp, out := e.putAssistant(wid, map[string]any{
-		"enabled": true, "botId": "B1", "botSecret": botSecret, "kimiApiKey": kimiKey,
+		"botId": "B1", "botSecret": botSecret, "kimiApiKey": kimiKey,
 		"kimiBase": "", "kimiModel": "", "version": 0,
 	}); resp.StatusCode != http.StatusOK {
 		t.Fatalf("保存失败：%d %v", resp.StatusCode, out)
@@ -28,7 +28,7 @@ func TestAssistantConfigRevokeSecrets(t *testing.T) {
 
 	// 撤销两个密钥（只给清除标志，不带新值）。
 	resp, out := e.putAssistant(wid, map[string]any{
-		"enabled": true, "botId": "B1", "botSecret": "", "kimiApiKey": "",
+		"botId": "B1", "botSecret": "", "kimiApiKey": "",
 		"kimiBase": "", "kimiModel": "", "version": 1,
 		"clearBotSecret": true, "clearKimiApiKey": true,
 	})
@@ -66,12 +66,12 @@ func TestAssistantConfigRevokeOnlyRequested(t *testing.T) {
 	e.register("partial", "password123")
 	wid := e.wid()
 	e.putAssistant(wid, map[string]any{
-		"enabled": true, "botId": "B1", "botSecret": "keep-this",
+		"botId": "B1", "botSecret": "keep-this",
 		"kimiApiKey": "delete-this", "kimiBase": "", "kimiModel": "", "version": 0,
 	})
 
 	resp, out := e.putAssistant(wid, map[string]any{
-		"enabled": true, "botId": "B1", "botSecret": "", "kimiApiKey": "",
+		"botId": "B1", "botSecret": "", "kimiApiKey": "",
 		"kimiBase": "", "kimiModel": "", "version": 1,
 		"clearKimiApiKey": true,
 	})
@@ -102,7 +102,7 @@ func TestAssistantConfigRevokeWorksWithoutMasterKey(t *testing.T) {
 	wid := e.wid()
 
 	resp, out := e.putAssistant(wid, map[string]any{
-		"enabled": false, "botId": "", "botSecret": "", "kimiApiKey": "",
+		"botId": "", "botSecret": "", "kimiApiKey": "",
 		"kimiBase": "", "kimiModel": "", "version": 0,
 		"clearBotSecret": true, "clearKimiApiKey": true,
 	})
@@ -120,12 +120,12 @@ func TestAssistantConfigBlankWithoutClearStillKeeps(t *testing.T) {
 	e.register("keepblank", "password123")
 	wid := e.wid()
 	e.putAssistant(wid, map[string]any{
-		"enabled": true, "botId": "B1", "botSecret": "must-survive",
+		"botId": "B1", "botSecret": "must-survive",
 		"kimiApiKey": "", "kimiBase": "", "kimiModel": "", "version": 0,
 	})
 
 	resp, out := e.putAssistant(wid, map[string]any{
-		"enabled": true, "botId": "B1", "botSecret": "", "kimiApiKey": "",
+		"botId": "B1", "botSecret": "", "kimiApiKey": "",
 		"kimiBase": "", "kimiModel": "", "version": 1,
 		// 没有 clearBotSecret
 	})

@@ -36,7 +36,13 @@ func NewKimi(apiKey, baseURL, model string, timeout time.Duration) *Kimi {
 	if timeout <= 0 {
 		timeout = 8 * time.Second
 	}
-	return &Kimi{APIKey: apiKey, Model: model, HTTP: &http.Client{Timeout: timeout}, base: baseURL}
+	return &Kimi{APIKey: apiKey, Model: model, HTTP: &http.Client{
+		Timeout: timeout,
+		// 不跟随重定向。base 是操作者可配置的 KimiBase：若一个看似可信的
+		// 主机 302 到内网地址（云元数据、内网服务），跟随重定向会把它变成
+		// SSRF 并把 Bearer 密钥带过去。直接连接（含本地 LLM）不受影响。
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}, base: baseURL}
 }
 
 const systemPrompt = `你是一个任务记录助手。用户会用一句中文或英文描述一件要做的事，你把它整理成一条待办任务。
@@ -46,6 +52,7 @@ const systemPrompt = `你是一个任务记录助手。用户会用一句中文�
 - due：截止日期，格式必须是 YYYY-MM-DD。下面会给出今天的日期和时区，所有相对说法（明天、下周三、后天）都要据此换算成具体日期。无法确定时填空字符串，不要猜。
 - priority：1 重要/紧急，2 中等，3 普通。用户没强调时填 3。
 - group：任务归类。用户明确说了就用原词，没说就按任务性质给一个简短的词。
+- 用户可能用「#词」标分组（如 #工作）、用 !!!/!!/! 标优先级（!!! 重要、!! 中等、! 普通）：据此填 group 与 priority，这些标记本身不要留在 title 里。
 
 必须调用 record_plan 工具提交结果，不要用自然语言回答。`
 
@@ -87,11 +94,15 @@ type chatMessage struct {
 }
 
 type chatRequest struct {
-	Model       string           `json:"model"`
-	Messages    []chatMessage    `json:"messages"`
-	Tools       []map[string]any `json:"tools"`
-	ToolChoice  string           `json:"tool_choice"`
-	Temperature float64          `json:"temperature"`
+	Model      string           `json:"model"`
+	Messages   []chatMessage    `json:"messages"`
+	Tools      []map[string]any `json:"tools"`
+	ToolChoice string           `json:"tool_choice"`
+	// Temperature 故意不发：Moonshot 的 kimi-k2 系列只允许 temperature=1，
+	// 显式发 0.1 这类「抽取任务低温」会被 400 拒绝（invalid temperature）；
+	// 各模型的默认值由服务端自己保证合法，且 function calling 已强约束
+	// 输出结构，低温收益有限。
+	Temperature *float64 `json:"temperature,omitempty"`
 }
 
 type chatResponse struct {
@@ -138,8 +149,6 @@ func (k *Kimi) Parse(ctx context.Context, text string, now time.Time, loc *time.
 		},
 		Tools:      []map[string]any{toolSchema},
 		ToolChoice: "auto",
-		// 抽取任务，不需要创造性。
-		Temperature: 0.1,
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {

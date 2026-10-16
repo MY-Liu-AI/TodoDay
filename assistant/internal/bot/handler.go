@@ -2,7 +2,11 @@
 //
 // 三个依赖都用接口声明，便于测试时替换：
 // 解析器、任务记录器、消息发送器。生产实现分别是 parse.Parser、
-// todoclient.Client、wecom.Client。
+// todoclient.Client、aibot.Client。
+//
+// 与内嵌后端的编排层（backend/internal/assistant）相比，这里是单轮路径：
+// 一句话解析一条任务，不做多轮追问与多任务拆分。解析只走 AI，
+// 未配置或失败都如实告知——不静默成功、不退回关键词猜测。
 package bot
 
 import (
@@ -16,9 +20,9 @@ import (
 	"assistant/internal/parse"
 )
 
-// Parser 把一句自然语言解析成结构化任务字段。
+// Parser 把一句自然语言解析成结构化任务字段。未配置 AI 或解析失败返回 error。
 type Parser interface {
-	Parse(ctx context.Context, text string) (parse.Plan, parse.Source)
+	Parse(ctx context.Context, text string) (parse.Plan, error)
 }
 
 // Recorder 把任务写进 TodoDay。clientID 用于幂等。
@@ -49,17 +53,15 @@ type Handler struct {
 	parser   Parser
 	recorder Recorder
 	sender   Sender
-	aiOn     bool // AI 是否已配置：决定降级时要不要在回执里说明
 
 	mu    sync.Mutex
 	seen  map[string]time.Time
 	order []string
 }
 
-// New 构造编排器。aiOn 为 true 时，若实际走了规则解析会在回执里说明，
-// 避免「AI 明明没生效却看起来正常」。
-func New(parser Parser, recorder Recorder, sender Sender, aiOn bool) *Handler {
-	return &Handler{parser: parser, recorder: recorder, sender: sender, aiOn: aiOn, seen: map[string]time.Time{}}
+// New 构造编排器。
+func New(parser Parser, recorder Recorder, sender Sender) *Handler {
+	return &Handler{parser: parser, recorder: recorder, sender: sender, seen: map[string]time.Time{}}
 }
 
 // Handle 处理一条消息：解析 → 建任务 → 回复。由回调处理器异步调用。
@@ -75,9 +77,11 @@ func (h *Handler) Handle(ctx context.Context, msg Incoming) {
 		return
 	}
 
-	plan, source := h.parser.Parse(ctx, text)
-	if strings.TrimSpace(plan.Title) == "" {
-		h.reply(ctx, msg.ReqID, "没能从这句话里认出计划内容。试试这种写法：明天 交周报 #工作 !!!")
+	// 单轮 AI 解析。未配置或失败时如实告知，不静默成功。
+	plan, err := h.parser.Parse(ctx, text)
+	if err != nil {
+		log.Printf("bot: 解析失败：%v", err)
+		h.reply(ctx, msg.ReqID, parseFailure(err))
 		return
 	}
 
@@ -96,13 +100,7 @@ func (h *Handler) Handle(ctx context.Context, msg Incoming) {
 		h.reply(ctx, msg.ReqID, recordFailure(err))
 		return
 	}
-
-	note := ""
-	if h.aiOn && source == parse.SourceRule {
-		// 降级是正常的，但要让人知道这次是按关键词理解的。
-		note = "\n（AI 解析未生效，按关键词理解）"
-	}
-	h.reply(ctx, msg.ReqID, "已记录：\n"+brief+note)
+	h.reply(ctx, msg.ReqID, "已记录：\n"+brief)
 }
 
 // reply 发回执。回执与 reqID 绑定：长连接模式下回复的是「某一次回调」，
@@ -149,6 +147,20 @@ func recordFailure(err error) string {
 		return "记录失败：内容不符合要求。" + strings.TrimPrefix(msg, "内容不符合要求：")
 	default:
 		return "记录失败，请稍后重试。\n（" + msg + "）"
+	}
+}
+
+// parseFailure 把解析失败翻译成用户能看懂、且能指向排查方向的文案。
+// AI 是单点：未配置或失败都不静默成功、不退回关键词猜测。
+func parseFailure(err error) string {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "未配置"):
+		return "AI 解析未配置，无法记录。请在网页「设置」页填写 LLM API Key，或设置环境变量 KIMI_API_KEY。"
+	case strings.Contains(msg, "没有给出任务内容"):
+		return "没能从这句话里认出计划内容。试试这种写法：明天 交周报 #工作 !!!"
+	default:
+		return "AI 解析失败，请稍后重试，或换个说法再发一遍。\n（" + msg + "）"
 	}
 }
 

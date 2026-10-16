@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-func TestNewTextReplyCarriesReqID(t *testing.T) {
-	f := NewTextReply("req-abc", "已记录")
+func TestNewMarkdownReplyCarriesReqID(t *testing.T) {
+	f := NewMarkdownReply("req-abc", "已记录")
 	if f.Cmd != CmdRespondMsg {
 		t.Fatalf("cmd 应为 %s，得到 %s", CmdRespondMsg, f.Cmd)
 	}
@@ -15,21 +15,21 @@ func TestNewTextReplyCarriesReqID(t *testing.T) {
 		t.Fatalf("req_id 未透传：%q", f.Headers.ReqID)
 	}
 	var body struct {
-		Text struct {
+		Markdown struct {
 			Content string `json:"content"`
-		} `json:"text"`
+		} `json:"markdown"`
 	}
 	if err := json.Unmarshal(f.Body, &body); err != nil {
 		t.Fatal(err)
 	}
-	if body.Text.Content != "已记录" {
-		t.Fatalf("内容不正确：%q", body.Text.Content)
+	if body.Markdown.Content != "已记录" {
+		t.Fatalf("内容不正确：%q", body.Markdown.Content)
 	}
 }
 
 // 出站帧的字段名必须是官方那一套，改了服务端就不认。
 func TestReplyFrameJSONShape(t *testing.T) {
-	raw, err := json.Marshal(NewTextReply("r1", "hi"))
+	raw, err := json.Marshal(NewMarkdownReply("r1", "hi"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,11 +48,11 @@ func TestReplyFrameJSONShape(t *testing.T) {
 	if !ok {
 		t.Fatalf("body 缺失：%v", m)
 	}
-	if body["msgtype"] != nil {
-		t.Errorf("文本回复不需要 msgtype 字段：%v", body)
+	if body["msgtype"] != "markdown" {
+		t.Errorf("msgtype 应为 markdown，得到 %v", body["msgtype"])
 	}
-	if _, ok := body["text"].(map[string]any); !ok {
-		t.Errorf("缺少 body.text：%v", body)
+	if _, ok := body["markdown"].(map[string]any); !ok {
+		t.Errorf("缺少 body.markdown：%v", body)
 	}
 }
 

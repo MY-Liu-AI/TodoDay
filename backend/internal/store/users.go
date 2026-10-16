@@ -162,6 +162,21 @@ func (s *Store) Membership(ctx context.Context, userID, wsID int64) (string, err
 	return role, nil
 }
 
+// WorkspaceOwnerID returns the ID of the workspace owner. A workspace always
+// has at least one owner; if that invariant is somehow broken, ErrNotFound.
+func (s *Store) WorkspaceOwnerID(ctx context.Context, wsID int64) (int64, error) {
+	var id int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT user_id FROM workspace_members WHERE workspace_id = ? AND role = 'owner' ORDER BY user_id LIMIT 1`, wsID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	if err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
 func (s *Store) WorkspaceTimezone(ctx context.Context, wsID int64) (string, error) {
 	var tz string
 	err := s.db.QueryRowContext(ctx, `SELECT timezone FROM workspaces WHERE id = ?`, wsID).Scan(&tz)

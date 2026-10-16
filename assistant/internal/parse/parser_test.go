@@ -10,37 +10,35 @@ import (
 	"time"
 )
 
-// AI 可用时优先用 AI 的结果。
-func TestParserPrefersKimi(t *testing.T) {
+// 解析器只走 AI：接上 Kimi 时返回它的结果。
+func TestParserUsesKimi(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(toolCallResponse(`{"title":"AI 给的标题","due":"2026-11-01","priority":2,"group":"AI分组"}`))
 	}))
 	defer srv.Close()
 
 	p := NewParser(NewKimi("k", srv.URL, "", 5*time.Second), testLoc)
-	plan, source := p.Parse(context.Background(), "随便说点什么")
-	if source != SourceKimi {
-		t.Fatalf("应当使用 AI 解析，得到 %s", source)
+	plan, err := p.Parse(context.Background(), "随便说点什么")
+	if err != nil {
+		t.Fatal(err)
 	}
 	if plan.Title != "AI 给的标题" {
 		t.Fatalf("应当采用 AI 的结果，得到 %+v", plan)
 	}
 }
 
-// 未配置密钥时全部走规则解析。
-func TestParserFallsBackWhenNoKey(t *testing.T) {
+// 未配置密钥时如实报错：没有关键词兜底，编排层负责告知用户。
+func TestParserWithoutKimiFails(t *testing.T) {
 	p := NewParser(nil, testLoc)
-	plan, source := p.Parse(context.Background(), "明天 交周报 #工作 !!!")
-	if source != SourceRule {
-		t.Fatalf("应当走规则解析，得到 %s", source)
-	}
-	if plan.Title != "交周报" || plan.Due != "2026-10-16" {
-		t.Fatalf("规则解析结果不正确：%+v", plan)
+	if _, err := p.Parse(context.Background(), "明天 交周报 #工作 !!!"); err == nil {
+		t.Fatal("未配置 AI 时应当报错，而不是静默成功")
+	} else if !strings.Contains(err.Error(), "未配置") {
+		t.Fatalf("错误应说明未配置：%v", err)
 	}
 }
 
-// AI 报错时必须降级，而不是让整条消息失败。
-func TestParserFallsBackOnAPIError(t *testing.T) {
+// AI 报错时如实上抛，不静默成功、不退回规则。
+func TestParserSurfacesKimiError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte(`{"error":{"message":"boom"}}`))
@@ -48,17 +46,13 @@ func TestParserFallsBackOnAPIError(t *testing.T) {
 	defer srv.Close()
 
 	p := NewParser(NewKimi("k", srv.URL, "", 5*time.Second), testLoc)
-	plan, source := p.Parse(context.Background(), "明天 交周报")
-	if source != SourceRule {
-		t.Fatalf("AI 失败后应当降级到规则解析，得到 %s", source)
-	}
-	if plan.Title != "交周报" {
-		t.Fatalf("降级后应当仍能得到正确结果，得到 %+v", plan)
+	if _, err := p.Parse(context.Background(), "明天 交周报"); err == nil {
+		t.Fatal("AI 失败应当报错")
 	}
 }
 
-// AI 超时同样降级。
-func TestParserFallsBackOnTimeout(t *testing.T) {
+// AI 超时同样如实上抛。
+func TestParserSurfacesKimiTimeout(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(300 * time.Millisecond)
 		_, _ = w.Write(toolCallResponse(`{"title":"慢","due":"","priority":3,"group":"生活"}`))
@@ -66,26 +60,8 @@ func TestParserFallsBackOnTimeout(t *testing.T) {
 	defer srv.Close()
 
 	p := NewParser(NewKimi("k", srv.URL, "", 30*time.Millisecond), testLoc)
-	plan, source := p.Parse(context.Background(), "明天 交周报")
-	if source != SourceRule {
-		t.Fatalf("超时后应当降级，得到 %s", source)
-	}
-	if !strings.Contains(plan.Title, "交周报") {
-		t.Fatalf("降级结果不正确：%+v", plan)
-	}
-}
-
-// AI 返回了标题但内容为空时也要降级。
-func TestParserFallsBackOnEmptyTitle(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(toolCallResponse(`{"title":"","due":"","priority":3,"group":"生活"}`))
-	}))
-	defer srv.Close()
-
-	p := NewParser(NewKimi("k", srv.URL, "", 5*time.Second), testLoc)
-	_, source := p.Parse(context.Background(), "明天 交周报")
-	if source != SourceRule {
-		t.Fatalf("AI 没有给出内容时应当降级，得到 %s", source)
+	if _, err := p.Parse(context.Background(), "明天 交周报"); err == nil {
+		t.Fatal("超时应当报错")
 	}
 }
 
@@ -93,6 +69,30 @@ func TestParserLocationDefaultsToUTC(t *testing.T) {
 	p := NewParser(nil, nil)
 	if p.Location() != time.UTC {
 		t.Fatalf("未指定时区时应当默认 UTC，得到 %v", p.Location())
+	}
+}
+
+// KimiBase 是 owner 可控的配置项，客户端不得跟随重定向：否则一个看似可信
+// 的主机 302 到内网地址（云元数据等）会被当作 SSRF，把 Bearer 密钥带过去。
+func TestKimiDoesNotFollowRedirects(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 若重定向被跟随，这里会收到带 Bearer 的请求并回 200。
+		if r.Header.Get("Authorization") != "" {
+			_, _ = w.Write(toolCallResponse(`{"title":"泄漏","due":"","priority":3,"group":"生活"}`))
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer target.Close()
+
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusFound)
+	}))
+	defer redirector.Close()
+
+	k := NewKimi("k", redirector.URL, "", 5*time.Second)
+	if _, err := k.Parse(context.Background(), "明天 交周报", time.Now(), time.UTC); err == nil {
+		t.Fatal("重定向不应被跟随；跟随后会拿到 200 与解析结果")
 	}
 }
 
@@ -105,24 +105,36 @@ func TestIsEmpty(t *testing.T) {
 	}
 }
 
-// 端到端校验：无论走哪条路径，产出的字段都必须落在后端可接受的范围内。
+// 端到端校验：即便模型给出越界输出，经过解析器产出的字段也必须
+// 落在后端可接受的范围内，否则建任务会被 400 打回。
 func TestParserOutputIsAlwaysServerAcceptable(t *testing.T) {
-	inputs := []string{"明天 交周报 #工作 !!!", "买牛奶", "!!!", "1/5 报名", "随便说说"}
-	p := NewParser(nil, testLoc)
-	for _, in := range inputs {
-		plan, _ := p.Parse(context.Background(), in)
+	outputs := []string{
+		`{"title":"明天 交周报 #工作 !!!","due":"2026-10-16","priority":1,"group":"工作"}`,
+		`{"title":"买牛奶","due":"","priority":3,"group":""}`,
+		`{"title":"任务","due":"2026-13-45","priority":9,"group":"非常非常非常长的分组名称超过四十个字符是非常非常非常长的分组名称超过四十个字符"}`,
+	}
+	for _, out := range outputs {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write(toolCallResponse(out))
+		}))
+		p := NewParser(NewKimi("k", srv.URL, "", 5*time.Second), testLoc)
+		plan, err := p.Parse(context.Background(), "随便说点什么")
+		srv.Close()
+		if err != nil {
+			t.Fatalf("输出 %s 不应报错：%v", out, err)
+		}
 		if n := len([]rune(plan.Title)); n > 240 {
-			t.Errorf("输入 %q 的标题超长：%d", in, n)
+			t.Errorf("输出 %s 的标题超长：%d", out, n)
 		}
 		if n := len([]rune(plan.Group)); n > 40 {
-			t.Errorf("输入 %q 的分组超长：%d", in, n)
+			t.Errorf("输出 %s 的分组超长：%d", out, n)
 		}
 		if plan.Priority < 1 || plan.Priority > 3 {
-			t.Errorf("输入 %q 的优先级越界：%d", in, plan.Priority)
+			t.Errorf("输出 %s 的优先级越界：%d", out, plan.Priority)
 		}
 		if plan.Due != "" {
 			if _, err := time.ParseInLocation("2006-01-02", plan.Due, time.UTC); err != nil {
-				t.Errorf("输入 %q 的日期格式非法：%q", in, plan.Due)
+				t.Errorf("输出 %s 的日期格式非法：%q", out, plan.Due)
 			}
 		}
 	}

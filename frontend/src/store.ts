@@ -50,6 +50,8 @@ export interface WorkspaceInfo {
 export interface AssistantConfigView {
   configured: boolean;
   enabled: boolean;
+  /* 内嵌运行状态：此刻是否有一条连接在跑。与 enabled（持久化意图）分开。 */
+  running: boolean;
   botId: string;
   botSecretSet: boolean;
   kimiApiKeySet: boolean;
@@ -60,9 +62,9 @@ export interface AssistantConfigView {
 }
 
 /* 保存时的入参。密钥字段留空/省略表示「保留原值」，
-   这样前端不需要（也不应该）回显已存的密钥。 */
+   这样前端不需要（也不应该）回显已存的密钥。
+   注意没有 enabled：启用/停用由 start/stop 端点控制，保存配置不改开关。 */
 export interface AssistantConfigInput {
-  enabled: boolean;
   botId: string;
   botSecret?: string;
   kimiApiKey?: string;
@@ -72,6 +74,21 @@ export interface AssistantConfigInput {
   /* 显式撤销。留空只表示「不修改」，所以要删掉已存密钥必须明说。 */
   clearBotSecret?: boolean;
   clearKimiApiKey?: boolean;
+}
+
+/* 测试连接的结果。服务端做一次真实订阅，失败是正常结果（HTTP 仍是 200）。 */
+export interface AssistantTestResult {
+  ok: boolean;
+  errcode?: number;
+  errmsg?: string;
+  message?: string;
+  kimiConfigured: boolean;
+}
+
+/* LLM（Kimi）测试连接的结果。成功 ok=true；失败 ok=false 且 message 带原因。 */
+export interface AssistantLlmTestResult {
+  ok: boolean;
+  message?: string;
 }
 
 const SORT_KEY = "todo-day-sort";
@@ -519,7 +536,7 @@ export async function loadAssistantConfig() {
   }
 }
 
-export async function saveAssistantConfig(input: AssistantConfigInput) {
+export async function saveAssistantConfig(input: AssistantConfigInput, opts?: { silent?: boolean }) {
   if (!st.workspace) return false;
   st.assistantLoading = true;
   try {
@@ -529,7 +546,8 @@ export async function saveAssistantConfig(input: AssistantConfigInput) {
     });
     // 服务端回的是权威值（含递增后的 version），据它刷新本地掩码视图。
     st.assistant = view;
-    notify(C.assistantSaved);
+    // 静默模式供「启动助手」复用：启用前顺手保存，不弹「已保存」提示。
+    if (!opts?.silent) notify(C.assistantSaved);
     return true;
   } catch (e) {
     if (e instanceof ApiError && e.code === "encryption_unavailable") {
@@ -548,6 +566,104 @@ export async function saveAssistantConfig(input: AssistantConfigInput) {
     return false;
   } finally {
     st.assistantLoading = false;
+  }
+}
+
+/* 测试机器人凭据能否真连上企业微信。返回结果对象；HTTP 层错误返回 null
+   （已通过 notify 提示）。测试失败本身不是错误 —— 那是正常结果。
+   input 是「表单里此刻填的值」：先测当前输入，未填才由服务端回退到已保存值。 */
+export async function testAssistantConfig(input?: { botId?: string; botSecret?: string }): Promise<AssistantTestResult | null> {
+  if (!st.workspace) return null;
+  try {
+    return await api<AssistantTestResult>(wsPath("/assistant/test"), { method: "POST", body: input ?? {} });
+  } catch (e) {
+    if (e instanceof ApiError && e.code === "not_configured") {
+      notify(C.assistantTestNotConfigured, "error");
+      return null;
+    }
+    if (e instanceof ApiError && e.code === "encryption_unavailable") {
+      notify(C.assistantEncryptionMissing, "error");
+      return null;
+    }
+    if (e instanceof ApiError && e.status === 403) {
+      notify(C.assistantOwnerOnly, "error");
+      return null;
+    }
+    fail(e, C.assistantTestFailed);
+    return null;
+  }
+}
+
+/* 测试 LLM（Kimi）凭证能否真调通。返回结果对象；HTTP 层错误返回 null
+   （已通过 notify 提示）。测试失败本身不是错误 —— 那是正常结果。
+   input 是「表单里此刻填的值」：先测当前输入，未填才由服务端回退到已保存值。 */
+export async function testAssistantLlm(input?: { kimiApiKey?: string; kimiModel?: string }): Promise<AssistantLlmTestResult | null> {
+  if (!st.workspace) return null;
+  try {
+    return await api<AssistantLlmTestResult>(wsPath("/assistant/test-llm"), { method: "POST", body: input ?? {} });
+  } catch (e) {
+    if (e instanceof ApiError && e.code === "not_configured") {
+      notify(C.assistantLlmTestNotConfigured, "error");
+      return null;
+    }
+    if (e instanceof ApiError && e.code === "encryption_unavailable") {
+      notify(C.assistantEncryptionMissing, "error");
+      return null;
+    }
+    if (e instanceof ApiError && e.status === 403) {
+      notify(C.assistantOwnerOnly, "error");
+      return null;
+    }
+    fail(e, C.assistantLlmTestFailed);
+    return null;
+  }
+}
+
+/* 启动内嵌助手。成功后重新读取掩码视图，拿到权威的 running/enabled。 */
+export async function startAssistant(): Promise<boolean> {
+  if (!st.workspace) return false;
+  try {
+    await api(wsPath("/assistant/start"), { method: "POST" });
+    st.assistant = await api<AssistantConfigView>(wsPath("/assistant"));
+    notify(C.assistantStarted);
+    return true;
+  } catch (e) {
+    if (e instanceof ApiError && e.code === "not_found") {
+      notify(C.assistantTestNotConfigured, "error");
+      return false;
+    }
+    if (e instanceof ApiError && e.code === "not_configured") {
+      notify(C.assistantStartNoCredentials, "error");
+      return false;
+    }
+    if (e instanceof ApiError && e.code === "encryption_unavailable") {
+      notify(C.assistantEncryptionMissing, "error");
+      return false;
+    }
+    if (e instanceof ApiError && e.status === 403) {
+      notify(C.assistantOwnerOnly, "error");
+      return false;
+    }
+    fail(e, C.assistantStartFailed);
+    return false;
+  }
+}
+
+/* 停止内嵌助手。幂等：未启动时调用也返回成功。 */
+export async function stopAssistant(): Promise<boolean> {
+  if (!st.workspace) return false;
+  try {
+    await api(wsPath("/assistant/stop"), { method: "POST" });
+    st.assistant = await api<AssistantConfigView>(wsPath("/assistant"));
+    notify(C.assistantStoppedNotice);
+    return true;
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 403) {
+      notify(C.assistantOwnerOnly, "error");
+      return false;
+    }
+    fail(e, C.assistantStopFailed);
+    return false;
   }
 }
 

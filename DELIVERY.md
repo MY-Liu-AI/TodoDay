@@ -39,7 +39,7 @@
   - **回复必须透传回调的 `headers.req_id`**：长连接的回复是「回给某一次回调」而非「回给某个人」，丢了就发不出去。`bot.Sender` 接口因此是 `Reply(ctx, reqID, content)`。
   - 取回调时**先释放锁再调用**，否则回调里调用 `Reply` 会自锁死（`write` 全程持锁）。
   - 断线退避 3 秒起、上限 60 秒；同一机器人只允许一条有效长连接，新连接会踢掉旧的，故多实例会互踢（已在文档中列为未支持项）。
-- 解析（`internal/parse`）：优先 Kimi（Moonshot，OpenAI 兼容 `/chat/completions`，function calling 强制结构化输出，system prompt 注入当天日期与工作区时区）；未配置密钥、超时、出错或结果无内容时**自动退回规则解析**并记日志（移植前端 `parseInput`：中英文相对日期、`M月D日`/`M/D`、`#分组`、`!!!`/`!!`/`!` 三档优先级，默认分组规则与前端一致）。
+- 解析（`internal/parse`）：只走 Kimi（Moonshot，OpenAI 兼容 `/chat/completions`，function calling 强制结构化输出，system prompt 注入当天日期与工作区时区）。未配置密钥、超时、出错或结果无内容时**如实返回错误**，由编排层告知用户——不静默成功、不退回关键词规则；模型输出经本地 `normalize` 收敛到后端可接受范围（标题 240 字、分组 40 字、优先级 1–3、日期格式）。内嵌后端另有**多轮规划**（`record_plans`/`ask_user` 两个工具）：一句话拆多条、信息不足时追问，规划失败退回单轮解析，仍失败才报错。
 - 数据通路（`internal/todoclient`）：HTTP 调用现有后端 API，复用服务端字段校验、工作区归属校验与 `client_id` 幂等；CSRF 头自动携带；401 自动重登一次并重试；403（配置问题）与 400（内容问题）分类成不同错误，回执文案指向不同排查方向。
 - 幂等：`msgid` 直接作为 `clientId`（前缀 `wx_`），重投不会产生重复任务；进程内另有 `msgid` 去重缓存（上限 2000），避免重跑解析与重复回复。
 - 配置：全部经环境变量，启动时校验必填项并**只打印缺失的键名**（不打印值）；长连接地址额外校验协议前缀。键名与默认值见 `assistant/.env.example` 与 `assistant/README.md`（`ASSISTANT_ADDR`、`WECOM_BOT_ID`/`WECOM_BOT_SECRET`/`WECOM_BOT_WS_URL`、`TODO_API_BASE`/`TODO_USERNAME`/`TODO_PASSWORD`/`TODO_WORKSPACE_ID`、`KIMI_API_KEY`（或 `MOONSHOT_API_KEY`）/`KIMI_BASE_URL`/`ASSISTANT_MODEL`/`PARSE_TIMEOUT`）。旧的自建应用键名（`WECOM_CORP_ID` 等）已不再使用，设置它们不影响行为（有测试固定这一点）。
@@ -64,7 +64,15 @@
 - **心跳里复查配置**：只在下一次重连时读配置不够 —— 助手正连着时撤销凭据或停用，那条已建立的连接会一直工作，撤了却没生效。心跳（30 秒）顺带复查，发现「不该连接」就主动断开，随后回到 3 秒轮询。所以生效延迟是：未连接时 ≤3 秒，已连接时 ≤30 秒。
 - 顺带修复的真 bug：CSRF 中间件原先枚举 `POST/PATCH/DELETE`，**漏了 PUT**，新增的 PUT 路由被测试抓到未校验。改为「非 GET/HEAD/OPTIONS 一律校验」——白名单读方法比黑名单写方法安全，漏一个只会多校验不会少校验。
 - 测试：后端新增 `secretbox`（往返、非确定性 nonce、错密钥拒绝、篡改检测、nil Box 不静默通过、长度校验不回显密钥）、`store/assistant_test.go`（首建/更新、留空保留、冲突用 `ErrConfigConflict` 而非 `ErrConflict`、单行约束、级联删除）、`api/assistant_test.go`（**响应体整体扫描不含明文密钥**、缺主密钥拒绝且不落库、留空保留、409 不带 `task`、跨工作区 403、未登录 401、未知字段 400、缺 CSRF 头 403、`-gen-config-key` 输出可用）；`migrate_test.go` 增加「每个 up 必有 down」断言。助手新增 `FetchCredentials` 四条（200/404/401 重登/403）与 `Resolve` 六条（nil 全用环境变量、后端优先、**机密不回落环境变量**、非机密取默认值、撤销后为空、停用优先于环境变量残留）。前端新增 `settings.test.mjs` 八条契约。**安全复核补充的测试**：`store/assistant_revoke_test.go`（清除与保留两条语义并存、矛盾输入以清除为准、首次写入带清除不报错、撤销后可重新配置）、`api/assistant_revoke_test.go`（撤销后掩码与凭据接口均为空、库中密文确已删除、只撤销指定项、缺主密钥也能撤销、未勾选清除时留空仍保留）、`aibot/disabled_test.go`（停用/无凭据都不拨号、来源给空值按未配置处理、普通错误仍继续连接、撤销后重新配置可恢复、两种「不该连接」期间都持续轮询不退出）。全部通过。
-- **未实现**：前端不提供启停助手进程的能力（用户明确只要配置）；但设置页的「启用」开关会被助手在每次重连时读取并遵守——停用期间不连接、保持 3 秒轮询，重新启用后自动恢复，不需要重启进程。不显示助手在线状态；不做密钥轮换/主密钥迁移工具（换主密钥 = 重新填写）；不做多人各自一套机器人。
+- **未实现**：不做密钥轮换/主密钥迁移工具（换主密钥 = 重新填写）；不做多人各自一套机器人；不做 WeChat 用户到工作区成员的发件人绑定（任何在机器人「可见范围」内的人都能以工作区 owner 身份建任务，这是「固定单工作区」的既有设计）。启停能力见下方「内嵌运行助手」。
+
+**内嵌运行助手：测试 + 一键启停（2026-10-16 增量）**
+- 把 `assistant/` 的连接+解析逻辑并入 backend：`backend/internal/aibot`（长连接客户端 + `Verify` 订阅校验）、`backend/internal/parse`（Kimi + 规则）、`backend/internal/assistant`（`Manager`：per-workspace goroutine 注册表、`storeRecorder` 直写任务、`credentialSource` 心跳复查）。`backend/go.mod` 新增 `github.com/gorilla/websocket`（与 assistant 同版本）。
+- 新增 API（均仅 owner）：`POST /api/workspaces/{wid}/assistant/test`（真实订阅验证凭据，回 `{ok, errcode, errmsg, kimiConfigured}`）、`POST /assistant/start`、`POST /assistant/stop`；`GET /assistant` 掩码视图新增 `running` 字段。`enabled` 仍是「是否应运行」的持久化意图（复用，无新 migration），start/stop 改它并启动/停止进程内 goroutine；后端重启后 `SyncAssistants` 按 `enabled=1` 恢复。
+- 前端设置页新增「测试连接」「启动助手/停止助手」按钮与运行状态行（运行中/已停止/未配置）；保存配置不再携带 `enabled`（启停由 start/stop 端点控制，保存不改开关）。
+- **单实例约束**：`test`/`start` 做的是真实订阅，会占用该机器人唯一的有效长连接——同时手动跑着独立 `assistant/` 进程（或另一个后端实例）会互相踢；`test` 也会让正在跑的连接短暂断一次（客户端自动重连）。
+- **安全边界（如实说明）**：① 发件人授权沿用企业微信后台机器人的「可见范围」配置，不在本服务做 WeChat 用户 → 工作区成员映射——任何能对机器人说话的人都会以该工作区 owner 身份建任务（「固定单工作区、无多人绑定」的既有设计，非本次新增）。② Kimi 客户端不跟随重定向，避免 `KimiBase`（仅 owner 可设）被 302 到内网地址造成 SSRF 并带走 Bearer 密钥；直接连接 owner 提供的地址仍被允许（owner-only + 单机自部署）。
+- 测试：`backend/internal/assistant/manager_test.go`（凭据三态、缺主密钥、启动校验、本地假 WS 的启停往返）、`backend/internal/api/assistant_control_test.go`（owner 边界、未配置 404、无凭据 400、缺主密钥 400、CSRF）、`parse` 新增「不跟随重定向」；`assistant` 模块同步加「不跟随重定向」与相对日期断言的运行时化。
 
 ## 环境变量与启动（名称，非密钥值）
 

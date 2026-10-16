@@ -61,6 +61,38 @@ func scanAssistant(row interface{ Scan(...any) error }) (*AssistantConfig, error
 	return &c, nil
 }
 
+// SetAssistantEnabled 更新「助手是否应运行」的持久化意图。
+//
+// 这是幂等的开关位，不参与 version 乐观并发：它不承载用户可编辑的字段，
+// 「两个设备同时改开关」没有数据冲突语义，反而因为独立于 version 而能在
+// 启动/停止时直接写、不打断正在编辑配置的一方。
+func (s *Store) SetAssistantEnabled(ctx context.Context, wsID int64, enabled bool) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE workspace_assistant_config SET enabled = ?, updated_at = ? WHERE workspace_id = ?`,
+		enabled, formatTime(nowUTC()), wsID)
+	return err
+}
+
+// EnabledAssistantWorkspaceIDs 返回所有「助手已启用」的工作区，供进程启动时
+// 自动恢复连接。
+func (s *Store) EnabledAssistantWorkspaceIDs(ctx context.Context) ([]int64, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT workspace_id FROM workspace_assistant_config WHERE enabled = 1 ORDER BY workspace_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 // GetAssistantConfig 读取配置，未配置时返回 ErrNotFound。
 func (s *Store) GetAssistantConfig(ctx context.Context, wsID int64) (*AssistantConfig, error) {
 	return scanAssistant(s.db.QueryRowContext(ctx,

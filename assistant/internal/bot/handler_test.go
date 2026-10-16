@@ -13,18 +13,17 @@ import (
 // 三个依赖都用假实现，编排逻辑可以完全脱离网络与数据库测试。
 
 type fakeParser struct {
-	plan   parse.Plan
-	source parse.Source
-	err    error
-	calls  []string
+	plan  parse.Plan
+	err   error
+	calls []string
 }
 
-func (f *fakeParser) Parse(_ context.Context, text string) (parse.Plan, parse.Source) {
+func (f *fakeParser) Parse(_ context.Context, text string) (parse.Plan, error) {
 	f.calls = append(f.calls, text)
 	if f.err != nil {
-		return parse.Plan{}, parse.SourceRule
+		return parse.Plan{}, f.err
 	}
-	return f.plan, f.source
+	return f.plan, nil
 }
 
 type fakeRecorder struct {
@@ -62,15 +61,15 @@ func (f *fakeSender) Reply(_ context.Context, reqID, content string) error {
 	return nil
 }
 
-func newTestHandler(p *fakeParser, r *fakeRecorder, s *fakeSender, aiOn bool) *Handler {
-	return New(p, r, s, aiOn)
+func newTestHandler(p *fakeParser, r *fakeRecorder, s *fakeSender) *Handler {
+	return New(p, r, s)
 }
 
 func TestHandleRecordsTaskAndReplies(t *testing.T) {
-	p := &fakeParser{plan: parse.Plan{Title: "交周报", Due: "2026-10-16", Priority: 1, Group: "工作"}, source: parse.SourceKimi}
+	p := &fakeParser{plan: parse.Plan{Title: "交周报", Due: "2026-10-16", Priority: 1, Group: "工作"}}
 	r := &fakeRecorder{}
 	s := &fakeSender{}
-	h := newTestHandler(p, r, s, true)
+	h := newTestHandler(p, r, s)
 
 	h.Handle(context.Background(), Incoming{FromUser: "ZhangSan", Text: "明天 交周报 #工作 !!!", MsgID: "1234", ReqID: "req-1"})
 
@@ -101,10 +100,10 @@ func TestHandleRecordsTaskAndReplies(t *testing.T) {
 
 // 企业微信会重投同一条消息：不能重复建任务，也不能重复回复。
 func TestHandleDeduplicatesRetries(t *testing.T) {
-	p := &fakeParser{plan: parse.Plan{Title: "x", Priority: 3, Group: "生活"}, source: parse.SourceKimi}
+	p := &fakeParser{plan: parse.Plan{Title: "x", Priority: 3, Group: "生活"}}
 	r := &fakeRecorder{}
 	s := &fakeSender{}
-	h := newTestHandler(p, r, s, true)
+	h := newTestHandler(p, r, s)
 
 	msg := Incoming{FromUser: "ZhangSan", Text: "买牛奶", MsgID: "same-id", ReqID: "req-1"}
 	h.Handle(context.Background(), msg)
@@ -124,10 +123,10 @@ func TestHandleDeduplicatesRetries(t *testing.T) {
 
 // 没有 MsgId 的消息用「发送人 + 内容」兜底去重。
 func TestHandleDeduplicatesWithoutMsgID(t *testing.T) {
-	p := &fakeParser{plan: parse.Plan{Title: "x", Priority: 3, Group: "生活"}, source: parse.SourceKimi}
+	p := &fakeParser{plan: parse.Plan{Title: "x", Priority: 3, Group: "生活"}}
 	r := &fakeRecorder{}
 	s := &fakeSender{}
-	h := newTestHandler(p, r, s, true)
+	h := newTestHandler(p, r, s)
 
 	msg := Incoming{FromUser: "ZhangSan", Text: "买牛奶", ReqID: "req-1"}
 	h.Handle(context.Background(), msg)
@@ -141,7 +140,7 @@ func TestHandleRejectsEmptyText(t *testing.T) {
 	p := &fakeParser{plan: parse.Plan{Title: "x", Priority: 3, Group: "生活"}}
 	r := &fakeRecorder{}
 	s := &fakeSender{}
-	h := newTestHandler(p, r, s, false)
+	h := newTestHandler(p, r, s)
 
 	h.Handle(context.Background(), Incoming{FromUser: "ZhangSan", Text: "   ", MsgID: "1", ReqID: "req-1"})
 
@@ -156,12 +155,13 @@ func TestHandleRejectsEmptyText(t *testing.T) {
 	}
 }
 
-// 解析不出内容时不建任务，但要告诉用户怎么写。
+// 解析不出内容时不建任务，但要告诉用户怎么写。AI 是单点：
+// 解析失败必须如实告知，不静默成功、也不退回关键词猜测。
 func TestHandleRejectsUnparseableText(t *testing.T) {
-	p := &fakeParser{plan: parse.Plan{Title: "  ", Priority: 3, Group: "生活"}, source: parse.SourceRule}
+	p := &fakeParser{err: errors.New("模型没有给出任务内容")}
 	r := &fakeRecorder{}
 	s := &fakeSender{}
-	h := newTestHandler(p, r, s, false)
+	h := newTestHandler(p, r, s)
 
 	h.Handle(context.Background(), Incoming{FromUser: "ZhangSan", Text: "。。。", MsgID: "2", ReqID: "req-2"})
 
@@ -170,6 +170,27 @@ func TestHandleRejectsUnparseableText(t *testing.T) {
 	}
 	if len(s.sent) != 1 || !strings.Contains(s.sent[0].Text, "明天 交周报") {
 		t.Fatalf("应当给出正确格式示例，得到 %+v", s.sent)
+	}
+}
+
+// AI 未配置时明确告知去哪配置。独立进程的两条配置路径（设置页、环境变量）
+// 都要提，少提一条就会把用户引去翻不存在的地方。
+func TestHandleReportsUnconfiguredAI(t *testing.T) {
+	p := &fakeParser{err: errors.New("未配置 AI 解析")}
+	r := &fakeRecorder{}
+	s := &fakeSender{}
+	h := newTestHandler(p, r, s)
+
+	h.Handle(context.Background(), Incoming{FromUser: "ZhangSan", Text: "买牛奶", MsgID: "5", ReqID: "req-5"})
+
+	if len(r.created) != 0 {
+		t.Fatal("AI 未配置时不该建任务")
+	}
+	if len(s.sent) != 1 || !strings.Contains(s.sent[0].Text, "AI 解析未配置") {
+		t.Fatalf("应当说明未配置 AI：%+v", s.sent)
+	}
+	if !strings.Contains(s.sent[0].Text, "设置」页") || !strings.Contains(s.sent[0].Text, "KIMI_API_KEY") {
+		t.Fatalf("两条配置路径都应提及：%s", s.sent[0].Text)
 	}
 }
 
@@ -193,10 +214,10 @@ func TestRecordFailureMessagesAreActionable(t *testing.T) {
 }
 
 func TestHandleReportsRecordFailure(t *testing.T) {
-	p := &fakeParser{plan: parse.Plan{Title: "x", Priority: 3, Group: "生活"}, source: parse.SourceKimi}
+	p := &fakeParser{plan: parse.Plan{Title: "x", Priority: 3, Group: "生活"}}
 	r := &fakeRecorder{err: errors.New("无权访问该工作区：x")}
 	s := &fakeSender{}
-	h := newTestHandler(p, r, s, true)
+	h := newTestHandler(p, r, s)
 
 	h.Handle(context.Background(), Incoming{FromUser: "ZhangSan", Text: "买牛奶", MsgID: "3", ReqID: "req-3"})
 
@@ -208,38 +229,12 @@ func TestHandleReportsRecordFailure(t *testing.T) {
 	}
 }
 
-// AI 已配置但实际走了规则解析：回执要说明，避免「看起来正常其实没生效」。
-func TestHandleNotesRuleFallbackWhenAIEnabled(t *testing.T) {
-	p := &fakeParser{plan: parse.Plan{Title: "x", Priority: 3, Group: "生活"}, source: parse.SourceRule}
-	r := &fakeRecorder{}
-	s := &fakeSender{}
-	h := newTestHandler(p, r, s, true)
-
-	h.Handle(context.Background(), Incoming{FromUser: "ZhangSan", Text: "买牛奶", MsgID: "4", ReqID: "req-4"})
-	if len(s.sent) != 1 || !strings.Contains(s.sent[0].Text, "按关键词理解") {
-		t.Fatalf("应当说明走了降级路径：%+v", s.sent)
-	}
-}
-
-// AI 未配置时不加这句说明——那是正常配置，不是降级。
-func TestHandleOmitsFallbackNoteWhenAIOff(t *testing.T) {
-	p := &fakeParser{plan: parse.Plan{Title: "x", Priority: 3, Group: "生活"}, source: parse.SourceRule}
-	r := &fakeRecorder{}
-	s := &fakeSender{}
-	h := newTestHandler(p, r, s, false)
-
-	h.Handle(context.Background(), Incoming{FromUser: "ZhangSan", Text: "买牛奶", MsgID: "5", ReqID: "req-5"})
-	if strings.Contains(s.sent[0].Text, "按关键词理解") {
-		t.Fatalf("未配置 AI 时不该出现降级说明：%s", s.sent[0].Text)
-	}
-}
-
 // 发送失败不该影响已经落库的任务，也不该 panic。
 func TestSendFailureDoesNotBreak(t *testing.T) {
-	p := &fakeParser{plan: parse.Plan{Title: "x", Priority: 3, Group: "生活"}, source: parse.SourceKimi}
+	p := &fakeParser{plan: parse.Plan{Title: "x", Priority: 3, Group: "生活"}}
 	r := &fakeRecorder{}
 	s := &fakeSender{err: errors.New("长连接当前不可用")}
-	h := newTestHandler(p, r, s, true)
+	h := newTestHandler(p, r, s)
 
 	h.Handle(context.Background(), Incoming{FromUser: "ZhangSan", Text: "买牛奶", MsgID: "6", ReqID: "req-6"})
 	if len(r.created) != 1 {
@@ -266,7 +261,7 @@ func TestDueLabelAndPriorityLabel(t *testing.T) {
 
 // 去重缓存必须有上限，否则长跑服务会无限增长。
 func TestSeenCacheIsBounded(t *testing.T) {
-	h := newTestHandler(&fakeParser{}, &fakeRecorder{}, &fakeSender{}, false)
+	h := newTestHandler(&fakeParser{}, &fakeRecorder{}, &fakeSender{})
 	for i := 0; i < seenLimit+100; i++ {
 		h.firstSight(Incoming{FromUser: "u", Text: "t", MsgID: string(rune(i))})
 	}

@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -30,6 +31,18 @@ func decodeJSON(r *http.Request, dst any) error {
 	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<20))
 	dec.DisallowUnknownFields()
 	return dec.Decode(dst)
+}
+
+// decodeOptionalJSON 与 decodeJSON 相同，但允许空请求体：没有 body（或 body 为空）时
+// dst 保持零值、不报错。用于「可带可不带表单值的探测请求」——测试连接端点既可能
+// 带上当前表单值，也可能为了沿用已保存值而发空 body。
+func decodeOptionalJSON(r *http.Request, dst any) error {
+	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<20))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dst); err != nil && !errors.Is(err, io.EOF) {
+		return err
+	}
+	return nil
 }
 
 // mapStoreError converts store sentinel errors to HTTP responses.

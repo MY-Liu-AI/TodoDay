@@ -171,15 +171,15 @@ func TestClientSubscribeDispatchAndReply(t *testing.T) {
 			t.Fatalf("回复没有透传 req_id：%q", rf.Headers.ReqID)
 		}
 		var body struct {
-			Text struct {
+			Markdown struct {
 				Content string `json:"content"`
-			} `json:"text"`
+			} `json:"markdown"`
 		}
 		if err := json.Unmarshal(rf.Body, &body); err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(body.Text.Content, "交周报") {
-			t.Fatalf("回复内容不正确：%q", body.Text.Content)
+		if !strings.Contains(body.Markdown.Content, "交周报") {
+			t.Fatalf("回复内容不正确：%q", body.Markdown.Content)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("超时：服务端没有收到回复")

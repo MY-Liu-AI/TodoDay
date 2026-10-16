@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"tododay/internal/assistant"
 	"tododay/internal/secretbox"
 	"tododay/internal/store"
 )
@@ -31,6 +32,8 @@ type Server struct {
 	// box 负责助手凭据的加解密。为 nil 表示未配置主密钥：
 	// 读取掩码视图仍可用，但保存密钥会被拒绝。
 	box *secretbox.Box
+	// assistant 内嵌运行助手连接（per-workspace）。测试/启动/停止都走它。
+	assistant *assistant.Manager
 }
 
 func NewServer(st *store.Store, staticDir string) *Server {
@@ -47,9 +50,20 @@ func NewServer(st *store.Store, staticDir string) *Server {
 		limiter:    newLoginLimiter(10, time.Minute),
 		mux:        http.NewServeMux(),
 		box:        box,
+		assistant:  assistant.NewManager(st, box),
 	}
 	s.routes()
 	return s
+}
+
+// SyncAssistants 在进程启动后恢复所有「已启用」工作区的助手连接。
+func (s *Server) SyncAssistants(ctx context.Context) {
+	s.assistant.SyncAll(ctx)
+}
+
+// CloseAssistants 停止全部助手连接，供进程优雅退出时调用。
+func (s *Server) CloseAssistants() {
+	s.assistant.Close()
 }
 
 func (s *Server) routes() {
@@ -76,6 +90,12 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/workspaces/{wid}/assistant", s.withAuth(s.withWorkspace(s.getAssistantConfig)))
 	s.mux.HandleFunc("PUT /api/workspaces/{wid}/assistant", s.withAuth(s.withWorkspaceOwner(s.putAssistantConfig)))
 	s.mux.HandleFunc("GET /api/workspaces/{wid}/assistant/credentials", s.withAuth(s.withWorkspaceOwner(s.assistantCredentials)))
+
+	// 助手运行控制（仅 owner）：测试凭据、启动/停止内嵌运行的连接。
+	s.mux.HandleFunc("POST /api/workspaces/{wid}/assistant/test", s.withAuth(s.withWorkspaceOwner(s.testAssistant)))
+	s.mux.HandleFunc("POST /api/workspaces/{wid}/assistant/test-llm", s.withAuth(s.withWorkspaceOwner(s.testAssistantLlm)))
+	s.mux.HandleFunc("POST /api/workspaces/{wid}/assistant/start", s.withAuth(s.withWorkspaceOwner(s.startAssistant)))
+	s.mux.HandleFunc("POST /api/workspaces/{wid}/assistant/stop", s.withAuth(s.withWorkspaceOwner(s.stopAssistant)))
 }
 
 // Handler wraps the mux with security and panic-recovery middleware.

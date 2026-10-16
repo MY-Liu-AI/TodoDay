@@ -128,12 +128,21 @@ func (b *InboundBody) IsText() bool {
 	return b.MsgType == MsgTypeText || b.MsgType == MsgTypeVoice
 }
 
-// NewTextReply 构造一条文本回复帧。
+// NewMarkdownReply 构造一条回复帧。
+//
+// 智能机器人长连接的主动回复只接受 markdown / template_card 两种 msgtype，
+// text 会被企业微信拒绝（errcode=40008 invalid message type）。所以纯文本
+// 回执也以 markdown 承载，内容字段结构与 text 相同（都是 content）。
 //
 // reqID 必须是回调里带的那个值：长连接的回复不是「回给某个人」，
 // 而是「回给某次回调」，丢了 req_id 就发不出去。
-func NewTextReply(reqID, content string) *Frame {
-	body, _ := json.Marshal(map[string]any{MsgTypeText: TextBody{Content: content}})
+func NewMarkdownReply(reqID, content string) *Frame {
+	// msgtype 是回复帧的必填字段，其值同时决定内容字段名。缺了它企业微信
+	// 会静默丢弃回复——表现为「任务记上了，机器人却一句话不回」。
+	body, _ := json.Marshal(map[string]any{
+		"msgtype":       MsgTypeMarkdown,
+		MsgTypeMarkdown: TextBody{Content: content},
+	})
 	return &Frame{
 		Cmd:     CmdRespondMsg,
 		Headers: FrameHeaders{ReqID: reqID},

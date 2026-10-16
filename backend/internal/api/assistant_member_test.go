@@ -20,7 +20,7 @@ func TestAssistantConfigMemberCannotWriteOrReadSecrets(t *testing.T) {
 	e.register("owner2", "password123")
 	wid := e.wid()
 	if resp, out := e.putAssistant(wid, map[string]any{
-		"enabled": true, "botId": "BOT-OWNER", "botSecret": "owner-secret",
+		"botId": "BOT-OWNER", "botSecret": "owner-secret",
 		"kimiApiKey": "owner-kimi", "kimiBase": "", "kimiModel": "", "version": 0,
 	}); resp.StatusCode != http.StatusOK {
 		t.Fatalf("owner 保存应成功：%d %v", resp.StatusCode, out)
@@ -55,7 +55,7 @@ func TestAssistantConfigMemberCannotWriteOrReadSecrets(t *testing.T) {
 
 	// 但不能改配置。
 	resp, _ = e.putAssistant(wid, map[string]any{
-		"enabled": true, "botId": "HACKED", "botSecret": "hacked",
+		"botId": "HACKED", "botSecret": "hacked",
 		"kimiApiKey": "", "kimiBase": "", "kimiModel": "", "version": 1,
 	})
 	if resp.StatusCode != http.StatusForbidden {
@@ -103,7 +103,7 @@ func TestAssistantConfigCrossWorkspaceForbidden(t *testing.T) {
 	e.register("owner3", "password123")
 	wid := e.wid()
 	e.putAssistant(wid, map[string]any{
-		"enabled": true, "botId": "B", "botSecret": "s", "kimiApiKey": "",
+		"botId": "B", "botSecret": "s", "kimiApiKey": "",
 		"kimiBase": "", "kimiModel": "", "version": 0,
 	})
 
@@ -122,7 +122,7 @@ func TestAssistantConfigCrossWorkspaceForbidden(t *testing.T) {
 		{"取凭据", func() (*http.Response, map[string]any) { return e.getCredentials(wid) }},
 		{"写配置", func() (*http.Response, map[string]any) {
 			return e.putAssistant(wid, map[string]any{
-				"enabled": true, "botId": "X", "botSecret": "", "kimiApiKey": "",
+				"botId": "X", "botSecret": "", "kimiApiKey": "",
 				"kimiBase": "", "kimiModel": "", "version": 0,
 			})
 		}},

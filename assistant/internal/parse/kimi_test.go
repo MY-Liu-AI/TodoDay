@@ -3,6 +3,7 @@ package parse
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -195,5 +196,28 @@ func TestKimiParseRespectsContextTimeout(t *testing.T) {
 	defer cancel()
 	if _, err := k.Parse(ctx, "开会", testNow, testLoc); err == nil {
 		t.Fatal("超时应当报错，由上层降级")
+	}
+}
+
+// kimi-k2 系列只允许 temperature=1：请求里带 temperature 会被 400 拒绝
+// （invalid temperature: only 1 is allowed for this model）。回归钉死：不发。
+func TestKimiDoesNotSendTemperature(t *testing.T) {
+	srv := kimiServer(t, func(w http.ResponseWriter, r *http.Request) {
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var body map[string]any
+		if err := json.Unmarshal(raw, &body); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := body["temperature"]; ok {
+			t.Error("请求不应携带 temperature：kimi-k2 系列只允许 1，显式发送会被 400 拒绝")
+		}
+		_, _ = w.Write(toolCallResponse(`{"title":"x","due":"","priority":3,"group":"生活"}`))
+	})
+	k := NewKimi("k", srv.URL, "", 5*time.Second)
+	if _, err := k.Parse(context.Background(), "开会", testNow, testLoc); err != nil {
+		t.Fatal(err)
 	}
 }
