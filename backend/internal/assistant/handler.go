@@ -176,21 +176,23 @@ func (h *Handler) handlePlanned(ctx context.Context, msg Incoming, text string) 
 			h.reply(ctx, msg.ReqID, "还是没能确认清楚。请用「明天 交周报 !!!」这种写法一次说清时间、内容和重要程度，或回复「取消」作废。")
 			return
 		}
-		question := strings.Join(dec.Questions, "\n")
-		sess.history = append(sess.history, parse.Message{Role: "assistant", Content: question})
+		replyText := withCancelHint(dec.Message)
+		sess.history = append(sess.history, parse.Message{Role: "assistant", Content: replyText})
 		sess.rounds++
 		sess.last = time.Now()
 		h.putSession(key, sess)
-		h.reply(ctx, msg.ReqID, formatQuestions(dec.Questions))
+		h.reply(ctx, msg.ReqID, replyText)
 	case parse.DecisionWrite:
 		h.deleteSession(key)
-		h.writePlans(ctx, msg, dec.Plans)
+		h.writePlans(ctx, msg, dec.Message, dec.Plans)
 	}
 }
 
 // writePlans 把多条任务逐条写库。每条带 `_i` 后缀的幂等键：同一条消息重投
 // 由 firstSight 挡住，而一次拆分出的多条任务彼此不撞键。
-func (h *Handler) writePlans(ctx context.Context, msg Incoming, plans []parse.Plan) {
+// opening 是模型生成的自然回执开头；为空时退回固定模板。明细行始终由系统
+// 按实际写入内容拼装——口吻可以交给模型，日期/分组/优先级的真实性不靠它。
+func (h *Handler) writePlans(ctx context.Context, msg Incoming, opening string, plans []parse.Plan) {
 	base := msg.MsgID
 	if base == "" {
 		base = fmt.Sprintf("%s_%d", msg.FromUser, hash(msg.Text))
@@ -207,7 +209,11 @@ func (h *Handler) writePlans(ctx context.Context, msg Incoming, plans []parse.Pl
 		}
 		written = append(written, fmt.Sprintf("• %s\n  %s · %s · %s", plan.Title, dueLabel(plan.Due), plan.Group, priorityLabel(plan.Priority)))
 	}
-	h.reply(ctx, msg.ReqID, fmt.Sprintf("已记录 %d 条：\n%s", len(written), strings.Join(written, "\n")))
+	head := strings.TrimSpace(opening)
+	if head == "" {
+		head = fmt.Sprintf("已记录 %d 条：", len(written))
+	}
+	h.reply(ctx, msg.ReqID, head+"\n"+strings.Join(written, "\n"))
 }
 
 // userKey 把「人 + 会话」当作追问状态的隔离键。单聊时 ChatID 为空，等于按人隔离。
@@ -224,15 +230,13 @@ func isCancel(text string) bool {
 	return false
 }
 
-// formatQuestions 把模型的问题列表整理成一条回执。
-func formatQuestions(qs []string) string {
-	lines := make([]string, 0, len(qs)+2)
-	lines = append(lines, "想确认几点：")
-	for i, q := range qs {
-		lines = append(lines, fmt.Sprintf("%d. %s", i+1, q))
+// withCancelHint 保证追问里始终带作废出口：模型口吻可以自由发挥，
+// 但「怎么反悔」这句必须一直在。
+func withCancelHint(msg string) string {
+	if strings.Contains(msg, "取消") {
+		return msg
 	}
-	lines = append(lines, "（回复「取消」可作废）")
-	return strings.Join(lines, "\n")
+	return msg + "\n（回复「取消」可作废）"
 }
 
 // getSession 取会话；过期则顺手清掉并返回 nil。

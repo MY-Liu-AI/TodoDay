@@ -556,3 +556,23 @@ func nullableDue(due string) any {
 	}
 	return due
 }
+
+// GroupNames 返回工作区的全部分组名（按现有排序），供助手规划时把
+// 「已有分组」注入提示词——模型不知道有哪些分组，就只能瞎猜类型。
+func (s *Store) GroupNames(ctx context.Context, wsID int64) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT name FROM task_groups WHERE workspace_id = ? ORDER BY position, name`, wsID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		out = append(out, name)
+	}
+	return out, rows.Err()
+}

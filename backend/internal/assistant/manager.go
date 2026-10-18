@@ -112,7 +112,7 @@ func (m *Manager) Start(ctx context.Context, wid, userID int64) error {
 
 	handler := New(parser, recorder, client)
 	if kimi != nil {
-		handler.SetPlanner(kimiPlanner{kimi: kimi, loc: loc})
+		handler.SetPlanner(kimiPlanner{kimi: kimi, loc: loc, st: m.st, wsID: wid})
 	}
 	client.SetCallback(&callbackAdapter{handler: handler})
 
@@ -269,14 +269,23 @@ func (r storeRecorder) CreatePlan(ctx context.Context, plan parse.Plan, clientID
 }
 
 // kimiPlanner 把 parse.Kimi 的多轮规划适配成 Handler 的 Planner 接口。
-// 时区取工作区时区，与单轮解析、统计口径一致。
+// 时区取工作区时区，与单轮解析、统计口径一致；每次规划前现查一遍工作区
+// 分组名——刚建过带新分组的任务，下一句就能用上。读失败不阻塞规划，
+// 模型退回默认分组策略。
 type kimiPlanner struct {
 	kimi *parse.Kimi
 	loc  *time.Location
+	st   *store.Store
+	wsID int64
 }
 
 func (p kimiPlanner) Plan(ctx context.Context, history []parse.Message) (parse.Decision, error) {
-	return p.kimi.Plan(ctx, history, time.Now(), p.loc)
+	groups, err := p.st.GroupNames(ctx, p.wsID)
+	if err != nil {
+		log.Printf("assistant: 读取工作区分组失败：%v", err)
+		groups = nil
+	}
+	return p.kimi.Plan(ctx, history, time.Now(), p.loc, groups)
 }
 
 // callbackAdapter 把长连接的回调转给编排层。

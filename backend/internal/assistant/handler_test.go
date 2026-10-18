@@ -336,7 +336,7 @@ func TestHandlePlannedWritesMultipleTasks(t *testing.T) {
 func TestHandlePlannedAsksThenWrites(t *testing.T) {
 	p := &fakeParser{}
 	pl := &fakePlanner{decisions: []parse.Decision{
-		{Kind: parse.DecisionAsk, Questions: []string{"截止日期是哪天？"}},
+		{Kind: parse.DecisionAsk, Message: "这份报告截止日期是哪天？"},
 		{Kind: parse.DecisionWrite, Plans: []parse.Plan{{Title: "交报告", Due: "2026-10-23", Priority: 1, Group: "工作"}}},
 	}}
 	r := &fakeRecorder{}
@@ -367,7 +367,7 @@ func TestHandlePlannedAsksThenWrites(t *testing.T) {
 // 追问中回复「取消」要清会话，且不再调模型。
 func TestHandlePlannedCancel(t *testing.T) {
 	p := &fakeParser{}
-	pl := &fakePlanner{decisions: []parse.Decision{{Kind: parse.DecisionAsk, Questions: []string{"几号？"}}}}
+	pl := &fakePlanner{decisions: []parse.Decision{{Kind: parse.DecisionAsk, Message: "几号要？"}}}
 	r := &fakeRecorder{}
 	s := &fakeSender{}
 	h := newPlannedHandler(p, pl, r, s)
@@ -389,7 +389,7 @@ func TestHandlePlannedCancel(t *testing.T) {
 // 追问太多轮仍没定下来：放弃追问，给一次能说清的示例。
 func TestHandlePlannedRoundCap(t *testing.T) {
 	p := &fakeParser{}
-	ask := parse.Decision{Kind: parse.DecisionAsk, Questions: []string{"几号？"}}
+	ask := parse.Decision{Kind: parse.DecisionAsk, Message: "几号要？"}
 	pl := &fakePlanner{decisions: []parse.Decision{ask, ask, ask, ask}}
 	r := &fakeRecorder{}
 	s := &fakeSender{}
@@ -428,7 +428,7 @@ func TestHandlePlannedFallsBackOnError(t *testing.T) {
 func TestHandlePlannedIsolatesByChatID(t *testing.T) {
 	p := &fakeParser{}
 	pl := &fakePlanner{decisions: []parse.Decision{
-		{Kind: parse.DecisionAsk, Questions: []string{"几号？"}},
+		{Kind: parse.DecisionAsk, Message: "几号要？"},
 		{Kind: parse.DecisionWrite, Plans: []parse.Plan{{Title: "另一件事", Due: "", Priority: 3, Group: "生活"}}},
 	}}
 	r := &fakeRecorder{}
@@ -451,8 +451,8 @@ func TestHandlePlannedIsolatesByChatID(t *testing.T) {
 func TestHandlePlannedSessionExpires(t *testing.T) {
 	p := &fakeParser{}
 	pl := &fakePlanner{decisions: []parse.Decision{
-		{Kind: parse.DecisionAsk, Questions: []string{"几号？"}},
-		{Kind: parse.DecisionAsk, Questions: []string{"再问一次？"}},
+		{Kind: parse.DecisionAsk, Message: "几号要？"},
+		{Kind: parse.DecisionAsk, Message: "再问一次？"},
 	}}
 	r := &fakeRecorder{}
 	s := &fakeSender{}

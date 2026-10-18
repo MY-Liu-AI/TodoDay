@@ -50,6 +50,7 @@ func TestPlanWritesMultipleTasks(t *testing.T) {
 			t.Errorf("提示词里没有今天的日期：%s", joined)
 		}
 		args, _ := json.Marshal(map[string]any{
+			"message": "好，周报明天交、邮件后天发，都记上了",
 			"plans": []map[string]any{
 				{"title": "交周报", "due": "2026-10-16", "priority": 1, "group": "工作"},
 				{"title": "回邮件", "due": "2026-10-17", "priority": 3, "group": "生活"},
@@ -59,7 +60,7 @@ func TestPlanWritesMultipleTasks(t *testing.T) {
 	})
 
 	k := NewKimi("k", srv.URL, "", 5*time.Second)
-	dec, err := k.Plan(context.Background(), []Message{{Role: "user", Content: "明天交周报，后天回邮件"}}, testNow, testLoc)
+	dec, err := k.Plan(context.Background(), []Message{{Role: "user", Content: "明天交周报，后天回邮件"}}, testNow, testLoc, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,22 +70,75 @@ func TestPlanWritesMultipleTasks(t *testing.T) {
 	if dec.Plans[0].Title != "交周报" || dec.Plans[0].Due != "2026-10-16" || dec.Plans[0].Priority != 1 {
 		t.Fatalf("第一条不正确：%+v", dec.Plans[0])
 	}
+	// 模型的自然口吻要原样透传给编排层，供回执使用。
+	if dec.Message != "好，周报明天交、邮件后天发，都记上了" {
+		t.Fatalf("回执开头未透传：%q", dec.Message)
+	}
 }
 
 func TestPlanAsksQuestions(t *testing.T) {
 	srv := kimiServer(t, func(w http.ResponseWriter, r *http.Request) {
 		args, _ := json.Marshal(map[string]any{
-			"questions": []string{"截止日期是哪天？", "重要程度如何？"},
+			"message": "这份报告什么时候要？重要程度如何？",
 		})
 		_, _ = w.Write(planCallResponse(askUserTool, string(args)))
 	})
 	k := NewKimi("k", srv.URL, "", 5*time.Second)
-	dec, err := k.Plan(context.Background(), []Message{{Role: "user", Content: "交个报告"}}, testNow, testLoc)
+	dec, err := k.Plan(context.Background(), []Message{{Role: "user", Content: "交个报告"}}, testNow, testLoc, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if dec.Kind != DecisionAsk || len(dec.Questions) != 2 {
-		t.Fatalf("应当追问 2 个问题：%+v", dec)
+	if dec.Kind != DecisionAsk {
+		t.Fatalf("应当追问：%+v", dec)
+	}
+	if !strings.Contains(dec.Message, "什么时候") {
+		t.Fatalf("追问消息未透传：%q", dec.Message)
+	}
+}
+
+// 模型给了 ask_user 却没写 message：不能报错退回单轮解析（那会把没日期的
+// 任务默默写进去），而是用一条兜底追问。
+func TestPlanAsksFallsBackWhenMessageEmpty(t *testing.T) {
+	srv := kimiServer(t, func(w http.ResponseWriter, r *http.Request) {
+		args, _ := json.Marshal(map[string]any{"message": "   "})
+		_, _ = w.Write(planCallResponse(askUserTool, string(args)))
+	})
+	k := NewKimi("k", srv.URL, "", 5*time.Second)
+	dec, err := k.Plan(context.Background(), []Message{{Role: "user", Content: "交个报告"}}, testNow, testLoc, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dec.Kind != DecisionAsk || dec.Message == "" {
+		t.Fatalf("空消息应回落到兜底追问：%+v", dec)
+	}
+}
+
+// 工作区现有分组要注入提示词——模型不知道有哪些分组就只能在 工作/生活 里猜。
+func TestPlanInjectsGroupNames(t *testing.T) {
+	srv := kimiServer(t, func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		joined := ""
+		for _, m := range req.Messages {
+			joined += m.Content
+		}
+		if !strings.Contains(joined, "工作区现有分组：项目A、客户、家里") {
+			t.Errorf("提示词里没有现有分组：%s", joined)
+		}
+		args, _ := json.Marshal(map[string]any{
+			"plans": []map[string]any{{"title": "任务", "due": "", "priority": 3, "group": "项目A"}},
+		})
+		_, _ = w.Write(planCallResponse(recordPlansTool, string(args)))
+	})
+	k := NewKimi("k", srv.URL, "", 5*time.Second)
+	_, err := k.Plan(context.Background(), []Message{{Role: "user", Content: "任务"}}, testNow, testLoc, []string{"项目A", "客户", "家里"})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -98,7 +152,7 @@ func TestPlanNormalizesOutOfRange(t *testing.T) {
 		_, _ = w.Write(planCallResponse(recordPlansTool, string(args)))
 	})
 	k := NewKimi("k", srv.URL, "", 5*time.Second)
-	dec, err := k.Plan(context.Background(), []Message{{Role: "user", Content: "任务"}}, testNow, testLoc)
+	dec, err := k.Plan(context.Background(), []Message{{Role: "user", Content: "任务"}}, testNow, testLoc, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +173,7 @@ func TestPlanSkipsEmptyTitles(t *testing.T) {
 		_, _ = w.Write(planCallResponse(recordPlansTool, string(args)))
 	})
 	k := NewKimi("k", srv.URL, "", 5*time.Second)
-	dec, err := k.Plan(context.Background(), []Message{{Role: "user", Content: "有效任务"}}, testNow, testLoc)
+	dec, err := k.Plan(context.Background(), []Message{{Role: "user", Content: "有效任务"}}, testNow, testLoc, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,14 +187,14 @@ func TestPlanRequiresToolCall(t *testing.T) {
 		_, _ = w.Write([]byte(`{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"好的"}}]}`))
 	})
 	k := NewKimi("k", srv.URL, "", 5*time.Second)
-	if _, err := k.Plan(context.Background(), []Message{{Role: "user", Content: "开会"}}, testNow, testLoc); err == nil {
+	if _, err := k.Plan(context.Background(), []Message{{Role: "user", Content: "开会"}}, testNow, testLoc, nil); err == nil {
 		t.Fatal("没有工具调用时应当报错")
 	}
 }
 
 func TestPlanWithoutKey(t *testing.T) {
 	k := NewKimi("", "http://unused", "", time.Second)
-	if _, err := k.Plan(context.Background(), []Message{{Role: "user", Content: "x"}}, testNow, testLoc); err == nil {
+	if _, err := k.Plan(context.Background(), []Message{{Role: "user", Content: "x"}}, testNow, testLoc, nil); err == nil {
 		t.Fatal("没有密钥时应当报错，由上层降级")
 	}
 }
@@ -157,7 +211,7 @@ func TestPlanWriteWinsOverAsk(t *testing.T) {
 				"message": map[string]any{
 					"role": "assistant",
 					"tool_calls": []map[string]any{
-						{"id": "a", "type": "function", "function": map[string]any{"name": askUserTool, "arguments": `{"questions":["几号？"]}`}},
+						{"id": "a", "type": "function", "function": map[string]any{"name": askUserTool, "arguments": `{"message":"几号？"}`}},
 						{"id": "b", "type": "function", "function": map[string]any{"name": recordPlansTool, "arguments": string(args)}},
 					},
 				},
@@ -167,7 +221,7 @@ func TestPlanWriteWinsOverAsk(t *testing.T) {
 		_, _ = w.Write(raw)
 	})
 	k := NewKimi("k", srv.URL, "", 5*time.Second)
-	dec, err := k.Plan(context.Background(), []Message{{Role: "user", Content: "任务"}}, testNow, testLoc)
+	dec, err := k.Plan(context.Background(), []Message{{Role: "user", Content: "任务"}}, testNow, testLoc, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
