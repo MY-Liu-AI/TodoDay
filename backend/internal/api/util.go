@@ -62,6 +62,11 @@ func mapStoreError(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusConflict, map[string]any{
 			"error": "conflict", "message": "数据已被其他设备修改", "task": ce.Current,
 		})
+	// 目标等无「携带最新值返回」约定的资源：409 只带提示，客户端重拉即可。
+	case errors.Is(err, store.ErrConflict):
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error": "conflict", "message": "数据已被其他设备修改，请刷新后重试",
+		})
 	case errors.Is(err, store.ErrUsernameTaken):
 		writeError(w, http.StatusConflict, "username_taken", "用户名已被占用")
 	case errors.Is(err, store.ErrInvalid):

@@ -28,6 +28,9 @@ import {
   confirmImport,
   skipImport,
   initSession,
+  restoreDeletedGoal,
+  dismissDeletedGoal,
+  requestNewGoal,
 } from "./store";
 import type { Item } from "./store";
 import { download, toCSV, poster, showPoster } from "./lib/export";
@@ -43,10 +46,13 @@ import TaskDialog from "./components/TaskDialog.vue";
 import AuthView from "./components/AuthView.vue";
 import FocusView from "./components/FocusView.vue";
 import SettingsView from "./components/SettingsView.vue";
+import GoalsView from "./components/GoalsView.vue";
 import { fs, restore as restoreFocus, fmtClock } from "./focus";
 
-const page = ref<"tasks" | "focus" | "stats" | "settings">("tasks");
+const page = ref<"tasks" | "focus" | "goals" | "stats" | "settings">("tasks");
 const mode = ref<"list" | "calendar">("calendar");
+/* 左下角「设置」菜单的展开态。 */
+const menuOpen = ref(false);
 const filter = ref("all");
 const group = ref("");
 const query = ref("");
@@ -98,6 +104,7 @@ const parsed = computed(() => parseInput(draft.value));
 const PAGE_META: Record<string, { overline: string; title: string; subtitle: string }> = {
   tasks: { overline: "PLANNER", title: C.myTasks, subtitle: C.subtitle },
   focus: { overline: "FOCUS", title: C.focus, subtitle: C.focusSubtitle },
+  goals: { overline: "GOALS", title: C.goals, subtitle: C.goalsSubtitle },
   stats: { overline: "INSIGHTS", title: C.insights, subtitle: C.statsSubtitle },
   settings: { overline: "SETTINGS", title: C.settings, subtitle: C.settingsSubtitle },
 };
@@ -276,10 +283,33 @@ watch(
           <Icon name="stats" />
           {{ C.insights }}
         </button>
-        <button :class="page === 'settings' ? 'is-active' : ''" @click="page = 'settings'">
-          <Icon name="gear" />
-          {{ C.settings }}
+        <button :class="page === 'goals' ? 'is-active' : ''" @click="page = 'goals'">
+          <Icon name="target" />
+          {{ C.goals }}
         </button>
+        <!-- 窄屏侧栏折叠：设置入口挪到导航行，桌面端由 CSS 隐藏 -->
+        <div class="settings-menu nav-settings">
+          <button class="settings-trigger" :aria-expanded="menuOpen" @click="menuOpen = !menuOpen">
+            <Icon name="gear" />
+          </button>
+          <div v-if="menuOpen" class="settings-backdrop" @click="menuOpen = false" />
+          <div v-if="menuOpen" class="settings-popup" role="menu">
+            <button
+              role="menuitem"
+              @click="
+                menuOpen = false;
+                page = 'settings';
+              "
+            >
+              <Icon name="gear" />
+              {{ C.settings }}
+            </button>
+            <button role="menuitem" @click="setTheme(theme === 'light' ? 'dark' : 'light')">
+              <Icon :name="theme === 'light' ? 'moon' : 'sun'" />
+              {{ theme === "light" ? C.themeDark : C.themeLight }}
+            </button>
+          </div>
+        </div>
       </nav>
       <div class="group-navigation">
         <span class="nav-caption">{{ C.projects }}</span>
@@ -309,14 +339,35 @@ watch(
         </button>
       </div>
       <div class="sidebar-bottom">
-        <button class="theme-button" @click="setTheme(theme === 'light' ? 'dark' : 'light')">
-          <Icon :name="theme === 'light' ? 'moon' : 'sun'" />
-          {{ theme === "light" ? C.themeDark : C.themeLight }}
-        </button>
+        <div class="settings-menu">
+          <button class="settings-trigger" :aria-expanded="menuOpen" @click="menuOpen = !menuOpen">
+            <Icon name="gear" />
+            {{ C.settingsMenu }}
+          </button>
+          <!-- 透明遮罩：点菜单外任意处收起 -->
+          <div v-if="menuOpen" class="settings-backdrop" @click="menuOpen = false" />
+          <div v-if="menuOpen" class="settings-popup" role="menu">
+            <button
+              role="menuitem"
+              @click="
+                menuOpen = false;
+                page = 'settings';
+              "
+            >
+              <Icon name="gear" />
+              {{ C.settings }}
+            </button>
+            <button role="menuitem" @click="setTheme(theme === 'light' ? 'dark' : 'light')">
+              <Icon :name="theme === 'light' ? 'moon' : 'sun'" />
+              {{ theme === "light" ? C.themeDark : C.themeLight }}
+            </button>
+          </div>
+        </div>
       </div>
     </aside>
     <main id="workspace" class="planner-workspace">
-      <header class="workspace-header">
+      <!-- 目标详情页自带标题与返回入口，页头整块隐藏（大标题/副标题/新建目标按钮）。 -->
+      <header v-if="page !== 'goals' || !st.goalsViewing" class="workspace-header">
         <div>
           <div class="overline">PERSONAL / {{ meta.overline }}</div>
           <h1>{{ meta.title }}</h1>
@@ -329,6 +380,10 @@ watch(
         >
           <Icon name="plus" />
           {{ C.newTask }}
+        </button>
+        <button v-if="page === 'goals'" class="primary-button new-goal" @click="requestNewGoal">
+          <Icon name="plus" />
+          {{ C.goalNew }}
         </button>
       </header>
       <p v-if="st.loadError" role="alert" class="storage-warning">
@@ -499,6 +554,7 @@ watch(
       </template>
       <FocusView v-else-if="page === 'focus'" />
       <SettingsView v-else-if="page === 'settings'" />
+      <GoalsView v-else-if="page === 'goals'" />
       <div v-else class="insights-layout">
         <section>
           <p class="history-note">{{ C.historyNote }}</p>
@@ -522,12 +578,19 @@ watch(
         <span>{{ new Date().getFullYear() }}</span>
       </footer>
     </main>
-    <div v-if="st.notice || st.deleted || st.importPrompt" class="feedback-toast" role="status">
+    <div v-if="st.notice || st.deleted || st.deletedGoal || st.importPrompt" class="feedback-toast" role="status">
       <Icon name="check" :size="16" />
       <template v-if="st.importPrompt">
         <span>{{ C.importOffer.replace("{n}", String(st.importPrompt.count)) }}</span>
         <button @click="confirmImport">{{ C.importNow }}</button>
         <button class="icon-button" :aria-label="C.importSkip" @click="skipImport">
+          <Icon name="close" :size="14" />
+        </button>
+      </template>
+      <template v-else-if="st.deletedGoal">
+        <span>{{ C.goalDeleted }}</span>
+        <button @click="restoreDeletedGoal">{{ C.undo }}</button>
+        <button class="icon-button" :aria-label="C.close" @click="dismissDeletedGoal">
           <Icon name="close" :size="14" />
         </button>
       </template>

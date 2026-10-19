@@ -30,6 +30,31 @@ export interface WireTask {
   position: number;
 }
 
+/* 目标：把任务串联成可跟踪的整体。进度不落库，由挂载任务的完成情况
+   推导（progress = 已完成权重 / 全部权重）；串行模式按挂载顺序解锁。 */
+export interface WireGoalTask {
+  taskId: string;
+  title: string;
+  done: boolean;
+  due: string; // "YYYY-MM-DD" 或 ""
+  group: string;
+  priority: number;
+  position: number;
+}
+
+export interface WireGoal {
+  id: number;
+  title: string;
+  note: string;
+  mode: "parallel" | "sequential";
+  due: string; // "YYYY-MM-DD" 或 ""（无排期）
+  status: "active" | "done" | "archived";
+  position: number;
+  version: number;
+  createdAt: string; // "YYYY-MM-DD"，健康度的时间起点
+  tasks: WireGoalTask[];
+}
+
 const TIMEOUT = 12_000;
 
 export async function api<T = any>(

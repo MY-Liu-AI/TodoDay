@@ -86,6 +86,16 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/workspaces/{wid}/focus/sessions", s.withAuth(s.withWorkspace(s.createFocusSession)))
 	s.mux.HandleFunc("GET /api/workspaces/{wid}/focus/stats", s.withAuth(s.withWorkspace(s.focusStats)))
 
+	// 目标：把任务串联成目标，进度由挂载任务的完成情况推导（不落库）。
+	s.mux.HandleFunc("GET /api/workspaces/{wid}/goals", s.withAuth(s.withWorkspace(s.listGoals)))
+	s.mux.HandleFunc("POST /api/workspaces/{wid}/goals", s.withAuth(s.withWorkspace(s.createGoal)))
+	s.mux.HandleFunc("PATCH /api/workspaces/{wid}/goals/{gid}", s.withAuth(s.withWorkspace(s.updateGoal)))
+	s.mux.HandleFunc("POST /api/workspaces/{wid}/goals/{gid}/delete", s.withAuth(s.withWorkspace(s.deleteGoal)))
+	s.mux.HandleFunc("POST /api/workspaces/{wid}/goals/{gid}/restore", s.withAuth(s.withWorkspace(s.restoreGoal)))
+	s.mux.HandleFunc("POST /api/workspaces/{wid}/goals/{gid}/tasks", s.withAuth(s.withWorkspace(s.attachGoalTask)))
+	s.mux.HandleFunc("POST /api/workspaces/{wid}/goals/{gid}/tasks/remove", s.withAuth(s.withWorkspace(s.detachGoalTask)))
+	s.mux.HandleFunc("POST /api/workspaces/{wid}/goals/{gid}/tasks/reorder", s.withAuth(s.withWorkspace(s.reorderGoalTasks)))
+
 	// 助手配置：成员可看掩码，只有 owner 能改、能取明文凭据。
 	s.mux.HandleFunc("GET /api/workspaces/{wid}/assistant", s.withAuth(s.withWorkspace(s.getAssistantConfig)))
 	s.mux.HandleFunc("PUT /api/workspaces/{wid}/assistant", s.withAuth(s.withWorkspaceOwner(s.putAssistantConfig)))

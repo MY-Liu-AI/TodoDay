@@ -74,6 +74,16 @@
 - **安全边界（如实说明）**：① 发件人授权沿用企业微信后台机器人的「可见范围」配置，不在本服务做 WeChat 用户 → 工作区成员映射——任何能对机器人说话的人都会以该工作区 owner 身份建任务（「固定单工作区、无多人绑定」的既有设计，非本次新增）。② Kimi 客户端不跟随重定向，避免 `KimiBase`（仅 owner 可设）被 302 到内网地址造成 SSRF 并带走 Bearer 密钥；直接连接 owner 提供的地址仍被允许（owner-only + 单机自部署）。
 - 测试：`backend/internal/assistant/manager_test.go`（凭据三态、缺主密钥、启动校验、本地假 WS 的启停往返）、`backend/internal/api/assistant_control_test.go`（owner 边界、未配置 404、无凭据 400、缺主密钥 400、CSRF）、`parse` 新增「不跟随重定向」；`assistant` 模块同步加「不跟随重定向」与相对日期断言的运行时化。
 
+**我的目标（2026-10-18 增量）**
+- 数据：`goals`（mode parallel|sequential、due 可空、status active|done|archived、position、version、软删）+ `goal_tasks`（挂载关系、position、weight 预留恒为 1；`UNIQUE(task_id)` 保证一条任务同一时间只属于一个目标），migration 0004_goals 含 down。
+- **进度不落库**：后端读时联表返回挂载任务的实时视图（完成状态、标题、日期、分组、优先级），前端按「已完成数 / 总数」推导百分比；任务仍是唯一事实来源，改任务本身两边同时生效。软删的任务暂时不计入进度，撤销删除后归属与进度自动恢复。
+- 健康度在前端推导：任务进度 vs 时间进度（createdAt→due 跨度，≥0 正常、≥−20pp 有风险、更低已滞后；无截止日期 → 无排期）。串行模式的「锁定」纯视图层——前面有未完成项时当前项置灰，是默认顺序而非服务端强制，允许先完成后面的任务（不制造死锁）。
+- API（成员级，不设 owner 边界——目标是个人生产力数据）：GET/POST `/api/workspaces/{wid}/goals`、PATCH `/goals/{gid}`（version 乐观并发，409 **不携带最新目标**，前端重拉列表对齐）、POST `/goals/{gid}/delete|restore`（软删 + 撤销恢复，挂载关系随目标保留）、POST `/goals/{gid}/tasks`（挂载；任务须属本工作区且未删除，跨工作区按不存在处理不泄露归属；已挂别的目标 → 409）、`POST /goals/{gid}/tasks/remove`、`POST /goals/{gid}/tasks/reorder`（数量必须正好等于当前挂载数，否则 400，单事务）。
+- **安全**：挂载类的写操作（attach/detach/reorder）先经 `requireGoalTx` 校验目标归属再下笔——此前不带校验的写法会让跨工作区 goalID「先写成功、再报 NotFound」，返回 404 但副作用已经发生（安全复核抓到的 IDOR，已修）。有回归测试钉死：跨区调用返回 NotFound 且对方目标、挂载、顺序原封不动。
+- 前端：侧栏新增「目标」页（target 图标，主导航第四项）。列表视图：统计条（进行中/平均进度/有风险/已达成）+ 进行中与已落定两个卡片区（进度条、模式标签、健康度点、剩余/超期天数）；详情视图：进度环（`.goal-ring`，与 app.css 的 `.ring` 区分）、里程碑链（串行显示第 N 步与锁定态）、任务挂载搜索框（可搜已有任务或回车直接新建并挂载，已在目标下的任务不再出现）、编辑/标记达成/重新打开/归档/删除（软删走全局 toast 撤销）。store 新增 goals 状态与生命周期动作，409 重拉列表、登出清空（`registerLogoutHook`）。
+- 测试：后端 `store/goals_test.go` 6 条（建列/挂载/一条任务一目标/跨区 NotFound/软删保留归属与任务撤销恢复/版本冲突/排序校验/**跨工作区写操作零副作用**）、`api/goals_test.go` 3 条（全生命周期含 409、校验、跨工作区 403）；前端 `goals.test.mjs` 5 条契约（App 接线、store 动作与端点、进度推导与串行锁定、文案键、目标删除 toast 撤销）。`focus.test.mjs` 的页面并集断言同步更新。
+- **未实现**：目标内任务拖拽排序 UI（API 已就绪）；任务权重（列已预留，恒为 1）；进度历史曲线图（P2）；任务弹窗里没有目标字段（挂载只在目标页操作）。
+
 ## 环境变量与启动（名称，非密钥值）
 
 | 变量 | 默认 | 用途 |
@@ -89,7 +99,7 @@
 
 ## migration / 回滚 / 备份
 
-- 启动时自动执行未应用的 up migration；每个 migration 有对应 down SQL（有测试强制 up/down 成对）；`store.RollbackAll()`（测试覆盖）可全部回退，含删除 schema_migrations。当前版本：0001_init、0002_focus、0003_assistant_config。
+- 启动时自动执行未应用的 up migration；每个 migration 有对应 down SQL（有测试强制 up/down 成对）；`store.RollbackAll()`（测试覆盖）可全部回退，含删除 schema_migrations。当前版本：0001_init、0002_focus、0003_assistant_config、0004_goals。
 - **备份时必须同时备份 `TODO_CONFIG_KEY`**：只备份数据库文件而丢了主密钥，`workspace_assistant_config` 里的两个 `*_enc` 列就是一堆解不开的字节。
 - 备份：直接复制 SQLite 数据库文件（WAL 模式下先 `PRAGMA wal_checkpoint(FULL)` 或随文件复制 `-wal`/`-shm`）；或 `VACUUM INTO 'backup.db'`。**实测提醒**：本服务用单连接且很少触发自动 checkpoint，一个全新库在短时间内**全部数据（含 migration 建的表）都只在 `-wal` 里**，主 `.db` 文件可能只有 4KB 空壳。只复制 `.db` 不复制 `-wal` 等于备份了一个空库——这一点在做加密落库验证时被实际踩到，故在此明示。
 - 回滚代码：checkout 上一版本 tag/commit，二进制与数据库文件一起回退；migration 只增不改，旧代码兼容新库的风险限于新增表/列（当前无此类变更）。
@@ -105,7 +115,7 @@
 
 ## 验收记录
 
-- `cd backend && go test ./internal/... -timeout 120s` → ok（api、store 两个包）。
-- `cd frontend && npm test` → 30/30；`npm run typecheck` → 0 错误；`npm run build` → 成功（gzip 后 JS 46KB / CSS 10KB）。
+- `cd backend && go test ./... -timeout 120s` → ok（api、store、aibot、assistant、parse、secretbox 六个包）。
+- `cd frontend && npm test` → 68/68；`npm run typecheck` → 0 错误；`npm run build` → 成功（gzip 后 JS 59KB / CSS 12KB）。
 - 真实服务冒烟：注册 → 建任务（带 clientId）→ 列表 → 完成 → activity 返回 `{counts: {"2026-10-15": 1}, timezone: "Asia/Shanghai"}`。
 - 浏览器双会话、跨账号越权、服务重启持久性由集成测试与上述冒烟覆盖；如需手动复核，按「启动」节起服务后开两个浏览器窗口即可。

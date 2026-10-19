@@ -7,7 +7,7 @@
 
 已落地，测试证据见 DELIVERY.md：
 
-- 数据库：嵌入式 SQLite（modernc.org/sqlite，WAL），表含 users、sessions、workspaces、workspace_members、task_groups、tasks、task_events；embedded migration + 回滚。`workspace_id` 行级隔离，全部查询带工作区归属校验。
+- 数据库：嵌入式 SQLite（modernc.org/sqlite，WAL），表含 users、sessions、workspaces、workspace_members、task_groups、tasks、task_events、goals、goal_tasks；embedded migration + 回滚。`workspace_id` 行级隔离，全部查询带工作区归属校验。
 - 身份：bcrypt 密码、httpOnly SameSite=Lax 会话 Cookie（7 天滚动续期）、注册即建默认工作区、登录限流、变更请求强制 `X-Requested-With` 头（CSRF 防护）。
 - 任务 API：listTasks、createTask（client_id 幂等键）、updateTask / setCompletion（version 乐观并发，409 携带最新任务）、reorderTasks（原子事务）、deleteTasks（软删 + task_events）、restoreTasks（服务端恢复）、getActivity（task_events 按工作区时区聚合）、importTasks（用户确认后导入旧 localStorage）。
 - 前端：frontend/ 为 Vue 3 + Vite + TypeScript，页面与原模板一致；store 乐观更新 + 失败回滚 + 409 以服务端版本替换；legacy 导入需用户在弹窗中明确同意。
@@ -15,7 +15,8 @@
 - 番茄专注（2026-10-15）：`focus_sessions` 表（migration 0002）+ `POST /focus/sessions`（client_id 幂等、completed 需满计划时长、task_id 校验归属）+ `GET /focus/stats`（今日/本周/本月/每日按工作区时区以结束时间归属）。前端计时本地跑、结束才写服务端，写失败保留重试，统计只读服务端。
 - 助手配置页（2026-10-15）：`workspace_assistant_config` 表（migration 0003）+ `secretbox` 包（AES-256-GCM，主密钥 `TODO_CONFIG_KEY`）+ 三个接口（成员读掩码 / owner 写 / owner 取明文）。**这是本仓库第一处需要解密回明文交给外部服务的凭据，也是第一处 owner-only 边界**；主密钥缺失时拒绝保存密钥而非退化成明文，主密钥丢失不可恢复。前端只是写入通道，密钥不进浏览器存储。
 - 企业微信助手（2026-10-15，`assistant/` 独立模块）：接入**智能机器人长连接**（`wss://openws.work.weixin.qq.com`，BotID + Secret，明文 JSON，无需公网地址与加解密）；`msgid` 作 clientId 复用建任务幂等，回复绑定回调的 `req_id`；Kimi 解析失败退回规则解析；不直连数据库，经 HTTP 复用本契约第 2、3 节的校验与授权。**该服务未接入新的存储或外部数据库，未新增任何上传能力。**
-- 未接入（如实列出）：无对象存储/附件上传（产品本就没有该功能，不伪造）；无通知推送；单机 SQLite，未接外部数据库服务；未部署上线；企业微信助手的真实消息链路（订阅后收发）需真实 BotID/Secret 才能验证，目前只验证了握手与订阅帧被服务端正确识别（假凭据返回 errcode 853000）。详见 DELIVERY.md。
+- 我的目标（2026-10-18）：`goals` + `goal_tasks` 表（migration 0004，含 down），任务串联成目标并跟踪进度。进度**不落库、由挂载任务的完成状态推导**（任务仍是唯一数据源）；一条任务同一时间只属于一个目标（`goal_tasks.task_id` 唯一约束）；并行/串行两种模式（串行锁定仅是视图层的默认顺序，服务端不强制，不制造死锁）；目标健康度按「任务进度 vs 时间进度」（创建→截止跨度）在前端推导；版本乐观并发 + 软删 + 服务端恢复与任务模块同一套约定。API：GET/POST `/goals`、PATCH `/goals/{gid}`（409 不带最新目标，前端重拉列表对齐）、POST `/goals/{gid}/delete|restore|tasks|tasks/remove|tasks/reorder`，均为成员级（目标是个人生产力数据，不设 owner 边界）。详见 DELIVERY.md。
+- 未接入（如实列出）：无对象存储/附件上传（产品本就没有该功能，不伪造）；无通知推送；单机 SQLite，未接外部数据库服务；未部署上线；企业微信助手的真实消息链路（订阅后收发）需真实 BotID/Secret 才能验证，目前只验证了握手与订阅帧被服务端正确识别（假凭据返回 errcode 853000）。目标模块未实现：目标内任务排序 UI（API 已就绪）、任务权重（列已预留恒为 1）、进度历史曲线图。详见 DELIVERY.md。
 
 ## 1. 找到所有本地替身
 

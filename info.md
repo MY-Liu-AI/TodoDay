@@ -22,6 +22,7 @@
 - 新建/编辑：标题、日期、分组、优先级；可键盘操作的原生dialog，空标题错误不会关闭弹窗。
 - 日历（默认入口）：七列月历、分类色任务、日期选择、当天议程、当天添加；手机以日期+任务数+分类色标展示，具体内容在议程中。颜色、分组文字同时存在，不以颜色作为唯一提示。清单/日历共用一份数据。未排期任务在日历下方可编辑。
 - 完成/撤销完成、删除/撤销删除、清理已完成/撤销；只保留最近一批删除的撤销。
+- 我的目标（侧栏「目标」）：把计划里的任务串成目标并跟踪进度。新建/编辑目标（标题、备注、并行/串行模式、截止日期），从清单搜索挂载任务或直接在目标里新建；详情页有进度环、里程碑链（串行模式按挂载顺序解锁，锁定只是默认顺序，服务端不强制）、健康度（任务进度 vs 时间进度：正常/有风险/已滞后/无排期）与剩余天数。进度不落库、由挂载任务的完成状态推导；一条任务同一时间只属于一个目标；目标可标记达成、重新打开、归档、删除（软删，可撤销）。挂载类的写操作都校验目标归属，跨工作区的目标一律按不存在处理。
 - 手动排序支持同日期分组内pointer拖拽与上下按钮；其他排序隐藏拖动入口。
 - 统计保留 18 周热力、分组读数、近 7 天完成柱图；与清单数据同一口径（task_events）。
 - 番茄专注（侧栏「我的计划」之下）：列出今天要处理的事（今天截止 + 逾期未完成），可绑定一件或自由开始，任务可在本页直接勾选完成；固定 25 分钟倒计时，开始/暂停/继续/放弃；走完记一个番茄，中途放弃只计时长（不足 1 分钟不记）。进行中的倒计时存在浏览器 localStorage，刷新页面或切换模块后按原结束时刻继续，离开期间走完的自动补记。今日番茄数、今日/本周/本月专注时长、近 4 周每日柱图、今日记录均来自服务端 focus_sessions，按工作区时区归属到结束当天；写入失败提示并可重试。
@@ -36,14 +37,14 @@ frontend/src/store.ts：响应式状态、乐观更新/回滚、409 冲突替换
 frontend/src/focus.ts：番茄计时器状态机（idle/running/paused/done）、进行中计时的 localStorage 持久化与恢复、专注记录写入与重试、统计读取、结束提示音。
 frontend/src/api.ts：REST 客户端（超时、CSRF 头、ApiError 带服务端最新任务）。
 frontend/src/copy.ts：本地化 UI 文案。
-frontend/src/components/：AuthView、CalendarView（独立月历与日议程）、Calendar（小月历筛选）、TaskDialog（可访问新建/编辑表单）、List（列表、勾选、拖拽及键盘排序）、FocusView（番茄专注页）、SettingsView（助手与 AI 凭证配置）、Heat/Recap/Stats（统计，同源数据）、Icon。
+frontend/src/components/：AuthView、CalendarView（独立月历与日议程）、Calendar（小月历筛选）、TaskDialog（可访问新建/编辑表单）、List（列表、勾选、拖拽及键盘排序）、FocusView（番茄专注页）、SettingsView（助手与 AI 凭证配置）、GoalsView/GoalDialog（我的目标：卡片列表、进度环详情、任务挂载）、Heat/Recap/Stats（统计，同源数据）、Icon。
 frontend/src/lib/model.js：搜索、排序、日期网格纯函数（validState 仅用于 legacy 导入校验）。
 frontend/src/lib/todo.js：解析、分桶、日期标签（无样本注入）。
 frontend/src/lib/heat.js：task_events 聚合的换算与统计口径。
 frontend/src/lib/palette.js / export.ts / fx.ts：中英分类色映射、CSV/海报导出、音效触感。
 backend/cmd/server/main.go：服务入口（优雅退出、内嵌时区库）。
-backend/internal/api/：HTTP 路由、会话认证、CSRF/安全头/限流、任务与统计接口、番茄专注接口、静态托管 SPA。
-backend/internal/store/：SQLite 连接（WAL、单写）、embedded migration、users/sessions、tasks、task_events 聚合、focus_sessions 记录与聚合、workspace_assistant_config 读写（密文由上层处理）。
+backend/internal/api/：HTTP 路由、会话认证、CSRF/安全头/限流、任务与统计接口、番茄专注接口、我的目标接口、静态托管 SPA。
+backend/internal/store/：SQLite 连接（WAL、单写）、embedded migration、users/sessions、tasks、task_events 聚合、focus_sessions 记录与聚合、goals/goal_tasks（进度不落库，读时联表推导）、workspace_assistant_config 读写（密文由上层处理）。
 backend/internal/secretbox/：助手凭据的 AES-256-GCM 加解密，主密钥来自 `TODO_CONFIG_KEY`；缺失时不阻止启动但拒绝保存密钥。
 frontend/src/styles/planner.css：浅色工作台样式，沿用 kit/tool/app 基础，可选深色。
 

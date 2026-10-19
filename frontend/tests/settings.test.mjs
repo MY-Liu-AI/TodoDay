@@ -70,7 +70,7 @@ test("settings view surfaces encryption-missing and owner-only states", () => {
 });
 
 test("settings page is wired into App with a gear icon", () => {
-  assert.match(app, /ref<"tasks" \| "focus" \| "stats" \| "settings">\("tasks"\)/);
+  assert.match(app, /ref<"tasks" \| "focus" \| "goals" \| "stats" \| "settings">\("tasks"\)/);
   assert.match(app, /import SettingsView from "\.\/components\/SettingsView\.vue"/);
   assert.match(app, /<SettingsView v-else-if="page === 'settings'" \/>/);
   assert.match(app, /page = 'settings'/);

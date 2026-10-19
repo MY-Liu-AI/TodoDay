@@ -6,7 +6,7 @@
  *  - 断网/超时/5xx：回滚本地改动并如实提示，不留下“已保存”的假象。
  */
 import { reactive } from "vue";
-import { api, ApiError, type WireTask } from "./api";
+import { api, ApiError, type WireGoal, type WireTask } from "./api";
 import { C } from "./copy";
 import { reorder as reorderList, dateValue, validState } from "./lib/model.js";
 
@@ -91,6 +91,16 @@ export interface AssistantLlmTestResult {
   message?: string;
 }
 
+/* 目标：任务的串联层。进度不落库——由挂载任务的完成情况推导，
+   这里是唯一一份目标状态，列表/详情都从这里读。 */
+export interface GoalInput {
+  title: string;
+  note: string;
+  mode: "parallel" | "sequential";
+  due: string; // "" 无排期
+  status: "active" | "done" | "archived";
+}
+
 const SORT_KEY = "todo-day-sort";
 const LEGACY_IMPORTED_KEY = "todo-day-imported";
 
@@ -126,6 +136,17 @@ export const st = reactive({
   // 助手配置的掩码视图。密钥不在其中，故也不必担心持久化泄漏。
   assistant: null as AssistantConfigView | null,
   assistantLoading: false,
+  // 目标列表（含每个目标挂载的任务视图）。
+  goals: [] as WireGoal[],
+  goalsLoaded: false,
+  // 最近一次软删的目标，供全局 toast 撤销。与任务共用同一交互。
+  deletedGoal: null as WireGoal | null,
+  // 「新建目标」按钮在 App 页头、对话框在 GoalsView 里：App 只递增这个
+  // 信号，GoalsView 监听后打开对话框（计数器避免重置时序问题）。
+  goalsNewSeq: 0,
+  // GoalsView 详情视图激活中：App 据此隐藏页头（大标题/副标题/新建目标按钮），
+  // 详情页自带返回入口，页头重复且占地方。
+  goalsViewing: false,
 });
 
 let noticeTimer = 0;
@@ -672,6 +693,192 @@ export function clearAssistantConfig() {
   st.assistantLoading = false;
 }
 registerLogoutHook(clearAssistantConfig);
+
+/* ── 目标（任务串联 + 进度跟踪） ───────────────────────────────────────── */
+
+export async function loadGoals(force = false) {
+  if (!st.workspace || (st.goalsLoaded && !force)) return;
+  try {
+    const data = await api<{ goals: WireGoal[] }>(wsPath("/goals"));
+    st.goals = data.goals;
+    st.goalsLoaded = true;
+  } catch (e) {
+    if (!onAuthLost(e)) fail(e, C.goalsLoadFailed);
+  }
+}
+
+function replaceGoal(goal: WireGoal) {
+  const idx = st.goals.findIndex((g) => g.id === goal.id);
+  if (idx >= 0) st.goals.splice(idx, 1, goal);
+  else st.goals.unshift(goal);
+}
+
+export async function addGoal(input: GoalInput): Promise<WireGoal | null> {
+  if (!st.workspace) return null;
+  try {
+    const goal = await api<WireGoal>(wsPath("/goals"), { method: "POST", body: input });
+    st.goals.unshift(goal);
+    notify(C.goalAdded);
+    return goal;
+  } catch (e) {
+    fail(e, C.goalSaveFailed);
+    return null;
+  }
+}
+
+/* 编辑目标（含标记达成/重新打开/归档——都是 status/mode/title 的编辑）。
+   409：目标不携带最新值返回，重拉列表让本地回到服务端状态。 */
+export async function saveGoal(id: number, input: GoalInput, version: number): Promise<boolean> {
+  if (!st.workspace) return false;
+  try {
+    const goal = await api<WireGoal>(wsPath(`/goals/${id}`), {
+      method: "PATCH",
+      body: { ...input, version },
+    });
+    replaceGoal(goal);
+    notify(C.goalSaved);
+    return true;
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 409) {
+      await loadGoals(true);
+      notify(C.conflict, "error");
+      return false;
+    }
+    fail(e, C.goalSaveFailed);
+    return false;
+  }
+}
+
+export async function deleteGoal(id: number) {
+  if (!st.workspace) return;
+  const goal = st.goals.find((g) => g.id === id);
+  if (!goal) return;
+  st.goals = st.goals.filter((g) => g.id !== id);
+  st.deletedGoal = goal;
+  try {
+    await api(wsPath(`/goals/${id}/delete`), { method: "POST", body: {} });
+    notify(C.goalDeleted);
+  } catch (e) {
+    st.goals.unshift(goal);
+    st.deletedGoal = null;
+    fail(e, C.goalSaveFailed);
+  }
+}
+
+export async function restoreDeletedGoal() {
+  const goal = st.deletedGoal;
+  if (!goal) return;
+  st.deletedGoal = null;
+  st.goals.unshift(goal);
+  try {
+    const restored = await api<WireGoal>(wsPath(`/goals/${goal.id}/restore`), { method: "POST", body: {} });
+    replaceGoal(restored);
+    notify(C.restored);
+  } catch (e) {
+    st.goals = st.goals.filter((g) => g.id !== goal.id);
+    fail(e);
+  }
+}
+
+export function dismissDeletedGoal() {
+  st.deletedGoal = null;
+  st.notice = "";
+}
+
+export async function attachTaskToGoal(goalId: number, taskId: string): Promise<boolean> {
+  if (!st.workspace) return false;
+  try {
+    const goal = await api<WireGoal>(wsPath(`/goals/${goalId}/tasks`), {
+      method: "POST",
+      body: { taskId },
+    });
+    replaceGoal(goal);
+    notify(C.goalTaskAttached);
+    return true;
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 409) {
+      notify(C.goalTaskAlreadyInGoal, "error");
+      return false;
+    }
+    fail(e, C.goalTaskAttachFailed);
+    return false;
+  }
+}
+
+/* 在目标下新建任务：先建任务（走既有幂等接口、进清单），再挂进目标。 */
+export async function createTaskInGoal(
+  goalId: number,
+  input: { t: string; p: number; due: number; g: string },
+): Promise<boolean> {
+  if (!st.workspace) return false;
+  const clientId = "c_" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+  try {
+    const task = await api<WireTask>(wsPath("/tasks"), {
+      method: "POST",
+      body: { t: input.t, p: input.p, due: input.due ? dateValue(input.due) : "", g: input.g, clientId },
+    });
+    st.items.unshift(toItem(task));
+    const ok = await attachTaskToGoal(goalId, task.id);
+    if (ok) notify(C.added);
+    return ok;
+  } catch (e) {
+    fail(e);
+    return false;
+  }
+}
+
+export async function detachTaskFromGoal(goalId: number, taskId: string): Promise<boolean> {
+  if (!st.workspace) return false;
+  try {
+    const goal = await api<WireGoal>(wsPath(`/goals/${goalId}/tasks/remove`), {
+      method: "POST",
+      body: { taskId },
+    });
+    replaceGoal(goal);
+    notify(C.goalTaskDetached);
+    return true;
+  } catch (e) {
+    fail(e, C.goalSaveFailed);
+    return false;
+  }
+}
+
+/* 目标页勾选任务复用 toggleTask（任务是唯一事实来源）；完成后目标视图
+   跟着 st.items 里的任务状态走，这里刷新一次让进度立刻对上。 */
+export async function toggleGoalTask(goalId: number, item: Item) {
+  await toggleTask(item);
+  if (st.goalsLoaded) await loadGoals(true);
+}
+
+export async function reorderGoalTasks(goalId: number, ids: string[]): Promise<boolean> {
+  if (!st.workspace) return false;
+  try {
+    const goal = await api<WireGoal>(wsPath(`/goals/${goalId}/tasks/reorder`), {
+      method: "POST",
+      body: { ids },
+    });
+    replaceGoal(goal);
+    return true;
+  } catch (e) {
+    fail(e, C.goalSaveFailed);
+    await loadGoals(true);
+    return false;
+  }
+}
+
+function clearGoals() {
+  st.goals = [];
+  st.goalsLoaded = false;
+  st.deletedGoal = null;
+  st.goalsNewSeq = 0;
+  st.goalsViewing = false;
+}
+registerLogoutHook(clearGoals);
+
+/* App 页头的「新建目标」按钮： GoalsView 通过 watch 消费这个信号。 */
+export function requestNewGoal() {
+  st.goalsNewSeq += 1;
+}
 
 /* ── 共享的错误处理 ───────────────────────────────────────────────────── */
 

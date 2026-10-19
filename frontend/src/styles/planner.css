@@ -255,7 +255,10 @@ button:disabled {
   margin-top: auto;
   padding-top: 48px;
 }
-.theme-button {
+.settings-menu {
+  position: relative;
+}
+.settings-trigger {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -264,6 +267,48 @@ button:disabled {
   color: var(--muted);
   padding: 16px 8px 0;
   font-size: 12px;
+}
+.settings-trigger:hover {
+  color: var(--ink);
+}
+.settings-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+.settings-popup {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 41;
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.12);
+}
+.settings-popup button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  padding: 9px 10px;
+  font-size: 12px;
+  text-align: left;
+  border-radius: 7px;
+}
+.settings-popup button:hover {
+  background: var(--raised);
+}
+/* 桌面端隐藏导航行里的设置入口——它属于左下角菜单 */
+.nav-settings {
+  display: none;
 }
 .planner-workspace {
   min-width: 0;
@@ -1076,7 +1121,8 @@ button:disabled {
   color: var(--muted);
 }
 .form-field input,
-.form-field select {
+.form-field select,
+.form-field textarea {
   width: 100%;
   min-height: 42px;
   border: 1px solid var(--line);
@@ -1085,6 +1131,16 @@ button:disabled {
   color: var(--ink);
   background: var(--panel);
   font-size: 14px;
+}
+.form-field textarea {
+  min-height: 64px;
+  resize: vertical;
+  line-height: 1.6;
+}
+.form-hint {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 8px 0 0;
 }
 .form-pair {
   display: grid;
@@ -1464,9 +1520,27 @@ button:disabled {
     font-size: 11px;
   }
   .workspace-label,
-  .group-navigation,
+  .group-navigation {
+    display: none;
+  }
+  /* 窄屏：左下角菜单整体收起，改用导航行末尾的齿轮入口 */
   .sidebar-bottom {
     display: none;
+  }
+  .nav-settings {
+    display: block;
+    margin-left: auto;
+  }
+  .nav-settings .settings-trigger {
+    padding: 8px 12px;
+    min-height: 36px;
+  }
+  /* 菜单在页面顶部，改为向下弹出 */
+  .nav-settings .settings-popup {
+    top: calc(100% + 8px);
+    bottom: auto;
+    left: auto;
+    right: 0;
   }
   .planner-nav {
     display: flex;
@@ -1748,5 +1822,315 @@ button:disabled {
   }
   .month-cell {
     break-inside: avoid;
+  }
+}
+
+/* ── 目标模块 ─────────────────────────────────────────────────────────── */
+.goals-view {
+  /* 与日历/统计页一致铺满工作区：卡片网格与统计条都靠内容自适应宽度，
+     加 max-width 会在宽屏上留下一条用不到的空白。 */
+  min-width: 0;
+}
+.goal-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.goal-stat {
+  background: var(--raised);
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+.goal-stat b {
+  display: block;
+  font-family: var(--mono);
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+.goal-stat span {
+  font-size: 11px;
+  color: var(--muted);
+}
+.goal-stat.is-warn b {
+  color: var(--warn);
+}
+.goals-empty {
+  font-size: 13px;
+  color: var(--muted);
+  padding: 32px 0 8px;
+  text-align: center;
+}
+.section-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 24px 0 12px;
+  color: var(--muted);
+}
+.section-heading h2 {
+  font-size: 12px;
+  font-weight: 550;
+  margin: 0;
+}
+.section-heading span {
+  font-family: var(--mono);
+  font-size: 10px;
+}
+.section-heading i {
+  height: 1px;
+  background: var(--line-soft);
+  flex: 1;
+}
+.goal-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 14px;
+}
+.goal-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px 18px;
+  text-align: left;
+  transition:
+    border-color 0.16s var(--ease),
+    box-shadow 0.16s var(--ease);
+}
+.goal-card:hover {
+  border-color: var(--accent);
+  box-shadow: var(--shadow, 0 8px 24px rgb(0 0 0 / 0.08));
+}
+.goal-card.is-done {
+  opacity: 0.75;
+}
+.goal-card-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.goal-card-top h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mode-tag {
+  font-size: 10px;
+  font-family: var(--mono);
+  color: var(--faint);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 6px;
+  flex-shrink: 0;
+}
+.health {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.health::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.health.ok {
+  color: var(--accent);
+}
+.health.risk {
+  color: var(--warn);
+}
+.health.late {
+  color: var(--neg);
+}
+.health.none {
+  color: var(--faint);
+}
+.goal-note {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0 0 14px;
+  line-height: 1.6;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.progress-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--line-soft);
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+  transition: width 0.4s var(--ease);
+}
+.goal-card-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.goal-card-foot .pct {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink);
+  margin-left: auto;
+}
+.goal-card-foot .due.is-late {
+  color: var(--neg);
+}
+.goal-detail-topbar {
+  margin-bottom: 16px;
+}
+.goal-detail {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 24px 28px;
+}
+.goal-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+.goal-ring {
+  position: relative;
+  width: 88px;
+  height: 88px;
+  flex-shrink: 0;
+}
+.goal-ring svg {
+  width: 88px;
+  height: 88px;
+  transform: rotate(-90deg);
+}
+.goal-ring circle {
+  fill: none;
+  stroke-width: 8;
+}
+.goal-ring .track {
+  stroke: var(--line-soft);
+}
+.goal-ring .val {
+  stroke: var(--accent);
+  stroke-linecap: round;
+  stroke-dasharray: 213.6;
+  transition: stroke-dashoffset 0.4s var(--ease);
+}
+.goal-ring b {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.goal-detail-title {
+  flex: 1;
+  min-width: 220px;
+}
+.goal-detail-title h3 {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin: 0 0 6px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.goal-detail-title p {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0;
+  line-height: 1.7;
+}
+.goal-detail-meta {
+  margin-top: 4px;
+}
+.goal-detail-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.goal-detail-empty {
+  font-size: 12px;
+  color: var(--faint);
+  padding: 16px 0 4px;
+}
+/* 子任务列表末行的添加入口（与 demo 的 .add-task 同款）。 */
+.goal-add-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: left;
+  transition: color 0.16s var(--ease);
+}
+.goal-add-row:hover {
+  color: var(--accent);
+  background: var(--raised);
+}
+.step-tag {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--faint);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 6px;
+  flex-shrink: 0;
+}
+.step-tag.now {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.lock {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: var(--faint);
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+}
+.task-row.is-locked .task-title {
+  color: var(--faint);
+}
+.task-row.is-locked .task-meta {
+  color: var(--faint);
+}
+@media (max-width: 700px) {
+  .goal-stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .goal-detail {
+    padding: 18px;
   }
 }
