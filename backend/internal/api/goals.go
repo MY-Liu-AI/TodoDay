@@ -11,6 +11,7 @@ import (
 func parseGoalInput(w http.ResponseWriter, in struct {
 	Title  string `json:"title"`
 	Note   string `json:"note"`
+	Group  string `json:"group"`
 	Mode   string `json:"mode"`
 	Due    string `json:"due"`
 	Status string `json:"status"`
@@ -23,6 +24,11 @@ func parseGoalInput(w http.ResponseWriter, in struct {
 	note := in.Note
 	if len([]rune(note)) > 500 {
 		writeError(w, http.StatusBadRequest, "validation_failed", "备注过长")
+		return store.GoalInput{}, false
+	}
+	group := in.Group
+	if len([]rune(group)) > 40 {
+		writeError(w, http.StatusBadRequest, "validation_failed", "分组标签过长")
 		return store.GoalInput{}, false
 	}
 	mode := in.Mode
@@ -38,12 +44,13 @@ func parseGoalInput(w http.ResponseWriter, in struct {
 		writeError(w, http.StatusBadRequest, "validation_failed", "日期需为 YYYY-MM-DD")
 		return store.GoalInput{}, false
 	}
-	return store.GoalInput{Title: title, Note: note, Mode: mode, Due: due, Status: status}, true
+	return store.GoalInput{Title: title, Note: note, Group: group, Mode: mode, Due: due, Status: status}, true
 }
 
 type goalPayload struct {
 	Title  string `json:"title"`
 	Note   string `json:"note"`
+	Group  string `json:"group"`
 	Mode   string `json:"mode"`
 	Due    string `json:"due"`
 	Status string `json:"status"`
@@ -182,6 +189,25 @@ func (s *Server) reorderGoalTasks(w http.ResponseWriter, r *http.Request, u *sto
 		return
 	}
 	writeJSON(w, http.StatusOK, g)
+}
+
+func (s *Server) reorderGoals(w http.ResponseWriter, r *http.Request, u *store.User, wid int64) {
+	var in struct {
+		IDs []int64 `json:"ids"`
+	}
+	if err := decodeJSON(r, &in); err != nil || len(in.IDs) == 0 {
+		writeError(w, http.StatusBadRequest, "validation_failed", "请求格式错误")
+		return
+	}
+	if len(in.IDs) > maxBatch {
+		writeError(w, http.StatusBadRequest, "validation_failed", "单次最多 500 项")
+		return
+	}
+	if err := s.st.ReorderGoals(r.Context(), wid, in.IDs); err != nil {
+		mapStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func parseGID(w http.ResponseWriter, r *http.Request) (int64, bool) {

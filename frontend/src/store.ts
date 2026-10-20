@@ -96,6 +96,7 @@ export interface AssistantLlmTestResult {
 export interface GoalInput {
   title: string;
   note: string;
+  group: string; // 分组标签，"" = 未分组
   mode: "parallel" | "sequential";
   due: string; // "" 无排期
   status: "active" | "done" | "archived";
@@ -141,6 +142,8 @@ export const st = reactive({
   goalsLoaded: false,
   // 最近一次软删的目标，供全局 toast 撤销。与任务共用同一交互。
   deletedGoal: null as WireGoal | null,
+  // 最近一次从目标移出的任务（任务本身不删，只解除挂载），供 toast 撤销。
+  detachedGoalTask: null as { goalId: number; taskId: string; title: string } | null,
   // 「新建目标」按钮在 App 页头、对话框在 GoalsView 里：App 只递增这个
   // 信号，GoalsView 监听后打开对话框（计数器避免重置时序问题）。
   goalsNewSeq: 0,
@@ -373,6 +376,21 @@ export function rememberSnapshot(item: Item) {
   snapshots.set(item.id, { ...item });
 }
 
+/* 完成回执：任务挂在某个目标下时，在完成提示里带上目标进度，
+   让「打勾」和「目标推进」两件事在用户心里连成一条线。 */
+function completionNotice(taskId: string): string {
+  const goal = goalOfTask(taskId);
+  if (!goal) return C.completed;
+  const done = goal.tasks.filter((t) => t.done || t.taskId === taskId).length;
+  return (
+    C.completed +
+    " · " +
+    C.goalDoneProgress.replace("{title}", goal.title)
+      .replace("{done}", String(done))
+      .replace("{total}", String(goal.tasks.length))
+  );
+}
+
 export async function toggleTask(item: Item) {
   rememberSnapshot(item);
   const next = !item.done;
@@ -384,7 +402,7 @@ export async function toggleTask(item: Item) {
       body: { done: next, version: item.version },
     });
     replaceItem(task);
-    notify(next ? C.completed : C.reopen);
+    notify(next ? completionNotice(item.id) : C.reopen);
     // 必须 force：statsLoaded 一旦为 true，不强制就会直接 return，热力图
     // 会一直显示打开统计页那一刻的旧数据（勾完看不到今天多了一格）。
     if (st.statsLoaded) refreshStats(true);
@@ -829,18 +847,39 @@ export async function createTaskInGoal(
 
 export async function detachTaskFromGoal(goalId: number, taskId: string): Promise<boolean> {
   if (!st.workspace) return false;
+  const goal = st.goals.find((g) => g.id === goalId);
+  const title = goal?.tasks.find((t) => t.taskId === taskId)?.title || "";
   try {
     const goal = await api<WireGoal>(wsPath(`/goals/${goalId}/tasks/remove`), {
       method: "POST",
       body: { taskId },
     });
     replaceGoal(goal);
+    st.detachedGoalTask = { goalId, taskId, title };
     notify(C.goalTaskDetached);
     return true;
   } catch (e) {
     fail(e, C.goalSaveFailed);
     return false;
   }
+}
+
+/* 撤销「移出目标」：任务还在清单里，重新挂回原来的目标即可。 */
+export async function restoreDetachedGoalTask() {
+  const d = st.detachedGoalTask;
+  if (!d) return;
+  st.detachedGoalTask = null;
+  if (await attachTaskToGoal(d.goalId, d.taskId)) notify(C.goalTaskAttached);
+}
+
+export function dismissDetachedGoalTask() {
+  st.detachedGoalTask = null;
+  st.notice = "";
+}
+
+/* 任务所属目标（计划页徽章用）：一条任务最多属于一个目标。 */
+export function goalOfTask(taskId: string): WireGoal | null {
+  return st.goals.find((g) => g.tasks.some((t) => t.taskId === taskId)) || null;
 }
 
 /* 目标页勾选任务复用 toggleTask（任务是唯一事实来源）；完成后目标视图
@@ -866,10 +905,31 @@ export async function reorderGoalTasks(goalId: number, ids: string[]): Promise<b
   }
 }
 
+/* 目标整体重排（卡片上的左移/右移按钮）：把 fromId 插到 toId 之前，
+   相邻即交换；提交全部目标 id（含已落定，位置不变），乐观更新，失败
+   回滚并由重拉兜底。 */
+export async function reorderGoals(fromId: number, toId: number): Promise<boolean> {
+  if (!st.workspace || fromId === toId) return false;
+  const next = reorderList(st.goals, fromId, toId);
+  if (next === st.goals) return false;
+  const prev = st.goals;
+  st.goals = next;
+  try {
+    await api(wsPath("/goals/reorder"), { method: "POST", body: { ids: next.map((g: WireGoal) => g.id) } });
+    return true;
+  } catch (e) {
+    st.goals = prev;
+    fail(e, C.goalSaveFailed);
+    await loadGoals(true);
+    return false;
+  }
+}
+
 function clearGoals() {
   st.goals = [];
   st.goalsLoaded = false;
   st.deletedGoal = null;
+  st.detachedGoalTask = null;
   st.goalsNewSeq = 0;
   st.goalsViewing = false;
 }

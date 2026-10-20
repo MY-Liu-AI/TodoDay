@@ -90,6 +90,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/workspaces/{wid}/goals", s.withAuth(s.withWorkspace(s.listGoals)))
 	s.mux.HandleFunc("POST /api/workspaces/{wid}/goals", s.withAuth(s.withWorkspace(s.createGoal)))
 	s.mux.HandleFunc("PATCH /api/workspaces/{wid}/goals/{gid}", s.withAuth(s.withWorkspace(s.updateGoal)))
+	s.mux.HandleFunc("POST /api/workspaces/{wid}/goals/reorder", s.withAuth(s.withWorkspace(s.reorderGoals)))
 	s.mux.HandleFunc("POST /api/workspaces/{wid}/goals/{gid}/delete", s.withAuth(s.withWorkspace(s.deleteGoal)))
 	s.mux.HandleFunc("POST /api/workspaces/{wid}/goals/{gid}/restore", s.withAuth(s.withWorkspace(s.restoreGoal)))
 	s.mux.HandleFunc("POST /api/workspaces/{wid}/goals/{gid}/tasks", s.withAuth(s.withWorkspace(s.attachGoalTask)))

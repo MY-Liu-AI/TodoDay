@@ -3,6 +3,7 @@ import { computed, onUnmounted } from "vue";
 import { ORDER, TODAY, bucketOf, dueText, midnight } from "../lib/todo.js";
 import { C } from "../copy";
 import type { Item } from "../store";
+import { goalOfTask } from "../store";
 import { groupColor } from "../lib/palette.js";
 import { haptic } from "../lib/fx";
 import Icon from "./Icon.vue";
@@ -13,6 +14,9 @@ const emit = defineEmits<{
   edit: [item: Item];
   reorder: [from: string, to: string];
 }>();
+
+/* 所属目标徽章：任务挂在目标下时，行内多一个小靶标 + 目标名。 */
+const goalBadge = (id: string) => goalOfTask(id)?.title || "";
 
 /* bucket 分组沿用原实现：逾期/今天/明天/以后/没排期/已完成。 */
 const grouped = computed(() => {
@@ -97,6 +101,10 @@ function drag(item: Item) {
         <button class="task-title-button" @click="emit('edit', i)">
           <span class="task-title">{{ i.t }}</span>
           <span class="task-meta">
+            <span v-if="goalBadge(i.id)" class="goal-badge" :title="goalBadge(i.id)">
+              <Icon name="target" :size="10" />
+              <span class="goal-badge-label">{{ goalBadge(i.id) }}</span>
+            </span>
             <span class="task-group-label" :data-color="groupColor(i.g)">{{ i.g }}</span>
             <span v-if="i.due" :class="midnight(i.due) < TODAY && !i.done ? 'is-late' : ''">{{ dueText(i) }}</span>
             <span v-if="i.p < 3">{{ i.p === 1 ? C.high : C.medium }}</span>

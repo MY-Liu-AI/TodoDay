@@ -9,7 +9,7 @@ import {
   dueText,
   visible,
 } from "./lib/todo.js";
-import { matches } from "./lib/model.js";
+import { matches, dateValue } from "./lib/model.js";
 import { groupColor } from "./lib/palette.js";
 import {
   st,
@@ -30,9 +30,13 @@ import {
   initSession,
   restoreDeletedGoal,
   dismissDeletedGoal,
+  restoreDetachedGoalTask,
+  dismissDetachedGoalTask,
   requestNewGoal,
+  loadGoals,
 } from "./store";
 import type { Item } from "./store";
+import type { WireGoalTask } from "./api";
 import { download, toCSV, poster, showPoster } from "./lib/export";
 import { sound, haptic } from "./lib/fx";
 import Icon from "./components/Icon.vue";
@@ -98,6 +102,24 @@ const pc = computed(() =>
 const open = computed(() => st.items.filter((i) => !i.done).length);
 const groups = computed(() => Array.from(new Set(st.items.map((i) => i.g))).filter(Boolean));
 const parsed = computed(() => parseInput(draft.value));
+
+/* 今日建议：每个进行中目标的下一个待办里程碑。已在今天计划里的不再建议；
+   目标是「提醒有哪些目标在推进」，不是把清单再复制一遍。 */
+const goalSuggestions = computed(() => {
+  const todayStr = dateValue(TODAY);
+  const out: { goalTitle: string; task: WireGoalTask }[] = [];
+  for (const g of st.goals) {
+    if (g.status !== "active") continue;
+    const next = g.tasks.find((t) => !t.done && t.due !== todayStr);
+    if (next) out.push({ goalTitle: g.title, task: next });
+  }
+  return out;
+});
+async function suggestToday(t: WireGoalTask) {
+  const item = st.items.find((i) => i.id === t.taskId);
+  if (!item) return;
+  if (await saveTask({ ...item, due: TODAY })) await loadGoals(true);
+}
 
 /* 页头文案。四个页面各一组，用查表而不是继续叠三元 ——
    再嵌套一层就该看不懂了。 */
@@ -274,6 +296,10 @@ watch(
           {{ C.plan }}
           <span>{{ open }}</span>
         </button>
+        <button :class="page === 'goals' ? 'is-active' : ''" @click="page = 'goals'">
+          <Icon name="target" />
+          {{ C.goals }}
+        </button>
         <button :class="page === 'focus' ? 'is-active' : ''" @click="page = 'focus'">
           <Icon name="timer" />
           {{ C.focus }}
@@ -282,10 +308,6 @@ watch(
         <button :class="page === 'stats' ? 'is-active' : ''" @click="goStats">
           <Icon name="stats" />
           {{ C.insights }}
-        </button>
-        <button :class="page === 'goals' ? 'is-active' : ''" @click="page = 'goals'">
-          <Icon name="target" />
-          {{ C.goals }}
         </button>
         <!-- 窄屏侧栏折叠：设置入口挪到导航行，桌面端由 CSS 隐藏 -->
         <div class="settings-menu nav-settings">
@@ -447,6 +469,21 @@ watch(
               </p>
               <p v-if="error" id="quick-error" role="alert" class="form-error">{{ error }}</p>
             </form>
+            <section v-if="goalSuggestions.length" class="goal-suggest">
+              <div class="task-group-heading">
+                <h2>{{ C.goalSuggestTitle }}</h2>
+                <span>{{ goalSuggestions.length }}</span>
+                <i />
+              </div>
+              <div v-for="s in goalSuggestions" :key="s.task.taskId" class="goal-suggest-row">
+                <span class="goal-badge" :title="s.goalTitle">
+                  <Icon name="target" :size="10" />
+                  <span class="goal-badge-label">{{ s.goalTitle }}</span>
+                </span>
+                <span class="goal-suggest-title">{{ s.task.title }}</span>
+                <button class="text-button" @click="suggestToday(s.task)">{{ C.goalSuggestAdd }}</button>
+              </div>
+            </section>
             <template v-if="mode === 'list'">
               <div class="task-controls">
                 <div class="status-filters" aria-label="myTasks">
@@ -578,7 +615,7 @@ watch(
         <span>{{ new Date().getFullYear() }}</span>
       </footer>
     </main>
-    <div v-if="st.notice || st.deleted || st.deletedGoal || st.importPrompt" class="feedback-toast" role="status">
+    <div v-if="st.notice || st.deleted || st.deletedGoal || st.detachedGoalTask || st.importPrompt" class="feedback-toast" role="status">
       <Icon name="check" :size="16" />
       <template v-if="st.importPrompt">
         <span>{{ C.importOffer.replace("{n}", String(st.importPrompt.count)) }}</span>
@@ -591,6 +628,13 @@ watch(
         <span>{{ C.goalDeleted }}</span>
         <button @click="restoreDeletedGoal">{{ C.undo }}</button>
         <button class="icon-button" :aria-label="C.close" @click="dismissDeletedGoal">
+          <Icon name="close" :size="14" />
+        </button>
+      </template>
+      <template v-else-if="st.detachedGoalTask">
+        <span>{{ C.goalTaskDetached }}{{ st.detachedGoalTask.title ? " · " + st.detachedGoalTask.title : "" }}</span>
+        <button @click="restoreDetachedGoalTask">{{ C.goalUndo }}</button>
+        <button class="icon-button" :aria-label="C.close" @click="dismissDetachedGoalTask">
           <Icon name="close" :size="14" />
         </button>
       </template>

@@ -46,6 +46,7 @@ export interface WireGoal {
   id: number;
   title: string;
   note: string;
+  group: string; // 分组标签，"" = 未分组（与任务分组同名同色）
   mode: "parallel" | "sequential";
   due: string; // "YYYY-MM-DD" 或 ""（无排期）
   status: "active" | "done" | "archived";

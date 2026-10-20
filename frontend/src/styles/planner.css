@@ -1032,6 +1032,31 @@ button:disabled {
   padding: 2px 6px;
   border-radius: 4px;
 }
+/* 所属目标徽章：小靶标 + 目标名，超宽截断。刻意不用分类色——
+   分类色是日历数据的编码，目标徽章只是来源标注。 */
+.goal-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 140px;
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.6;
+  flex: none;
+  min-width: 0;
+}
+.goal-badge svg {
+  flex: none;
+}
+.goal-badge-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
 .unscheduled {
   font-size: 12px;
   border-top: 1px solid var(--line);
@@ -1660,6 +1685,9 @@ button:disabled {
     opacity: 1;
     gap: 0;
   }
+  .goal-move {
+    opacity: 1;
+  }
   .drag-handle {
     display: none;
   }
@@ -1889,6 +1917,7 @@ button:disabled {
   gap: 14px;
 }
 .goal-card {
+  position: relative;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -1901,6 +1930,43 @@ button:disabled {
 .goal-card:hover {
   border-color: var(--accent);
   box-shadow: var(--shadow, 0 8px 24px rgb(0 0 0 / 0.08));
+}
+/* 排序键跨在卡片左右边框正中：左缘「前移」、右缘「后移」，悬停/聚焦时浮现。 */
+.goal-move {
+  position: absolute;
+  top: 50%;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--muted);
+  box-shadow: var(--shadow, 0 8px 24px rgb(0 0 0 / 0.08));
+  padding: 0;
+  opacity: 0;
+  transition:
+    opacity 0.16s var(--ease),
+    color 0.16s var(--ease),
+    border-color 0.16s var(--ease);
+  z-index: 1;
+}
+.goal-move-prev {
+  left: 0;
+  transform: translate(-50%, -50%);
+}
+.goal-move-next {
+  right: 0;
+  transform: translate(50%, -50%);
+}
+.goal-card:hover .goal-move,
+.goal-card:focus-within .goal-move {
+  opacity: 1;
+}
+.goal-move:hover {
+  color: var(--accent);
+  border-color: var(--accent);
 }
 .goal-card.is-done {
   opacity: 0.75;
@@ -2076,6 +2142,93 @@ button:disabled {
   font-size: 12px;
   color: var(--faint);
   padding: 16px 0 4px;
+}
+/* 里程碑行的操作组：安排 + 删除，整体贴行右侧对齐。 */
+.goal-task-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+/* 「安排」弹层：挂在操作组里，右对齐弹出。 */
+.goal-schedule {
+  position: relative;
+}
+.goal-schedule > .text-button.is-active {
+  color: var(--accent);
+}
+.goal-schedule-pop {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 30;
+  min-width: 148px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.14);
+}
+.goal-schedule-pop .text-button {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 6px 8px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+.goal-schedule-pop .text-button:hover {
+  background: var(--raised);
+}
+.goal-schedule-custom {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--muted);
+  border-top: 1px solid var(--line-soft);
+  margin-top: 2px;
+}
+.goal-schedule-custom input {
+  font: inherit;
+  color: var(--ink);
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 6px;
+}
+/* 串行目标的当前步：整行一点青绿底色 + 左侧标线，和 step-tag.now 呼应。 */
+.task-row.is-current {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+/* 今日建议：计划页顶部，每个进行中目标的下一个待办里程碑。 */
+.goal-suggest {
+  margin: 4px 0 12px;
+}
+.goal-suggest-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line-soft);
+  min-width: 0;
+}
+.goal-suggest-row:last-child {
+  border-bottom: 0;
+}
+.goal-suggest-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
 }
 /* 子任务列表末行的添加入口（与 demo 的 .add-task 同款）。 */
 .goal-add-row {

@@ -67,6 +67,35 @@ func TestGoalCreateAndList(t *testing.T) {
 		t.Fatalf("list: %v %d", err, len(goals))
 	}
 
+	// 分组标签：创建可带、可改，列表一并返回。
+	ga, err := st.CreateGoal(ctx, wsID, uid, GoalInput{
+		Title: "带分组的目标", Group: "工作", Mode: "parallel", Status: "active",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ga.Group != "工作" {
+		t.Fatalf("分组标签未落库：%+v", ga)
+	}
+	gb, err := st.UpdateGoal(ctx, wsID, ga.ID, GoalInput{
+		Title: ga.Title, Group: "学习", Mode: ga.Mode, Due: ga.Due, Status: ga.Status,
+	}, ga.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gb.Group != "学习" {
+		t.Fatalf("分组标签未更新：%+v", gb)
+	}
+	goals, err = st.ListGoals(ctx, wsID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, goal := range goals {
+		if goal.ID == ga.ID && goal.Group != "学习" {
+			t.Fatalf("列表未带回分组标签：%+v", goal)
+		}
+	}
+
 	// 无目标的工作区返回空数组而不是 nil（前端依赖 [] 渲染空态）。
 	other, err := st.CreateWorkspaceWithOwner(ctx, uid, "另一个", "Asia/Shanghai")
 	if err != nil {
@@ -248,6 +277,41 @@ func TestGoalReorderTasks(t *testing.T) {
 	}
 	if _, err := st.ReorderGoalTasks(ctx, wsID, g.ID, []string{t1.ID, t2.ID, "t_nope"}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("应为 ErrNotFound，得到 %v", err)
+	}
+}
+
+// 目标整体重排：ids 必须正好是当前全部目标（含已落定），单事务落 position。
+func TestGoalReorder(t *testing.T) {
+	st, wsID, uid := goalTestStore(t)
+	ctx := context.Background()
+	g1 := mustCreateGoal(t, st, wsID, uid, "甲")
+	g2 := mustCreateGoal(t, st, wsID, uid, "乙")
+	g3 := mustCreateGoal(t, st, wsID, uid, "丙")
+	// 创建顺序 丙→乙→甲（新目标排最前）。
+
+	if err := st.ReorderGoals(ctx, wsID, []int64{g3.ID, g1.ID, g2.ID}); err != nil {
+		t.Fatal(err)
+	}
+	goals, err := st.ListGoals(ctx, wsID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, want := range []int64{g3.ID, g1.ID, g2.ID} {
+		if goals[i].ID != want {
+			t.Fatalf("位置 %d 应为 %d，得到 %+v", i, want, goals[i])
+		}
+	}
+
+	// 数量不符拒绝，且不产生部分写入。
+	if err := st.ReorderGoals(ctx, wsID, []int64{g1.ID}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("应为 ErrInvalid，得到 %v", err)
+	}
+	if err := st.ReorderGoals(ctx, wsID, []int64{g1.ID, g2.ID, 9999}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("应为 ErrNotFound，得到 %v", err)
+	}
+	goals, err = st.ListGoals(ctx, wsID)
+	if err != nil || goals[0].ID != g3.ID || goals[1].ID != g1.ID || goals[2].ID != g2.ID {
+		t.Fatalf("失败的 reorder 不应产生副作用：%+v %v", goals, err)
 	}
 }
 

@@ -3,9 +3,13 @@ import { computed } from "vue";
 import { midnight, TODAY } from "../lib/todo.js";
 import { monthDays } from "../lib/model.js";
 import type { Item } from "../store";
+import { goalOfTask } from "../store";
 import { C } from "../copy";
 import Icon from "./Icon.vue";
 import { groupColor } from "../lib/palette.js";
+
+/* 所属目标徽章：任务挂在目标下时，日程行内多一个小靶标 + 目标名。 */
+const goalBadge = (id: string) => goalOfTask(id)?.title || "";
 
 const props = defineProps<{
   items: Item[];
@@ -132,6 +136,10 @@ function goToday() {
           </button>
           <button class="agenda-task" :class="i.done ? 'is-done' : ''" @click="emit('edit', i)">
             {{ i.t }}
+            <span v-if="goalBadge(i.id)" class="goal-badge" :title="goalBadge(i.id)">
+              <Icon name="target" :size="10" />
+              <span class="goal-badge-label">{{ goalBadge(i.id) }}</span>
+            </span>
             <span>{{ i.g }}</span>
           </button>
         </div>

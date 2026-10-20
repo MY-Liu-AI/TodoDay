@@ -5,7 +5,7 @@ import { C } from "../copy";
 import type { GoalInput } from "../store";
 import Icon from "./Icon.vue";
 
-const props = defineProps<{ goal: { title: string; note: string; mode: string; due: string } | null }>();
+const props = defineProps<{ goal: { title: string; note: string; group: string; mode: string; due: string } | null }>();
 const emit = defineEmits<{
   save: [input: GoalInput];
   close: [];
@@ -14,6 +14,7 @@ const emit = defineEmits<{
 const refEl = ref<HTMLDialogElement | null>(null);
 const title = ref(props.goal?.title || "");
 const note = ref(props.goal?.note || "");
+const group = ref(props.goal?.group || "");
 const mode = ref<"parallel" | "sequential">(props.goal?.mode === "sequential" ? "sequential" : "parallel");
 const due = ref(props.goal?.due || "");
 const error = ref("");
@@ -42,6 +43,7 @@ function submit() {
   emit("save", {
     title: title.value.trim(),
     note: note.value.trim(),
+    group: group.value.trim(),
     mode: mode.value,
     due: due.value,
     status: "active",
@@ -82,17 +84,21 @@ function onDialogClick(e: MouseEvent) {
       </label>
       <div class="form-pair">
         <label class="form-field">
-          {{ C.goalMode }}
-          <select v-model="mode">
-            <option value="parallel">{{ C.goalModeParallel }}</option>
-            <option value="sequential">{{ C.goalModeSequential }}</option>
-          </select>
+          {{ C.group }}
+          <input v-model="group" maxlength="40" :placeholder="C.group" />
         </label>
         <label class="form-field">
           {{ C.goalDue }}
           <input v-model="due" type="date" />
         </label>
       </div>
+      <label class="form-field">
+        {{ C.goalMode }}
+        <select v-model="mode">
+          <option value="parallel">{{ C.goalModeParallel }}</option>
+          <option value="sequential">{{ C.goalModeSequential }}</option>
+        </select>
+      </label>
       <p class="form-hint">{{ mode === "sequential" ? C.goalModeHintSequential : C.goalModeHintParallel }}</p>
       <p v-if="error" id="goal-error" role="alert" class="form-error">{{ error }}</p>
       <div class="dialog-actions">
