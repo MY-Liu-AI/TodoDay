@@ -7,7 +7,7 @@ import { DAY, TODAY, midnight } from "../lib/todo.js";
 import { dateValue } from "../lib/model.js";
 import { groupColor } from "../lib/palette.js";
 import { sound, haptic } from "../lib/fx";
-import { st, toggleTask } from "../store";
+import { st, toggleTask, goalOfTask } from "../store";
 import type { Item } from "../store";
 import {
   fs,
@@ -215,6 +215,10 @@ onMounted(() => loadStats());
             >
               <span class="event-dot" />
               <span class="focus-task-title">{{ i.t }}</span>
+              <span v-if="goalOfTask(i.id)" class="goal-badge" :title="goalOfTask(i.id)!.title">
+                <Icon name="target" :size="10" />
+                <span class="goal-badge-label">{{ goalOfTask(i.id)!.title }}</span>
+              </span>
               <span class="task-group-label">{{ i.g }}</span>
               <span class="focus-task-state">
                 <template v-if="fs.task?.id === i.id">{{ busy ? C.focusPicked : C.focusChange }}</template>

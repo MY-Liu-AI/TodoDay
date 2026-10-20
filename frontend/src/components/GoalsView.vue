@@ -13,14 +13,17 @@ import {
   loadGoals,
   addGoal,
   saveGoal,
+  saveTask,
   deleteGoal,
   createTaskInGoal,
   detachTaskFromGoal,
   toggleGoalTask,
+  reorderGoals,
   type GoalInput,
 } from "../store";
 import type { Item } from "../store";
 import type { WireGoal, WireGoalTask } from "../api";
+import { TODAY, DAY, midnight } from "../lib/todo.js";
 import Icon from "./Icon.vue";
 import GoalDialog from "./GoalDialog.vue";
 import TaskDialog from "./TaskDialog.vue";
@@ -98,6 +101,12 @@ function isLocked(g: WireGoal, index: number): boolean {
   return !t.done && g.tasks.slice(0, index).some((p) => !p.done);
 }
 
+/* 串行的当前步：第一个未完成的里程碑（按定义它前面的都已完成，未锁定）。
+   详情页给这一行加一点底色，让「现在该做哪件」不用找。 */
+function isCurrent(g: WireGoal, index: number): boolean {
+  return g.mode === "sequential" && !g.tasks[index].done && !isLocked(g, index);
+}
+
 function stepLabel(g: WireGoal, index: number): string {
   const n = index + 1;
   if (g.mode !== "sequential") return "";
@@ -161,19 +170,61 @@ async function onSubtaskSave(item: Item) {
 async function changeStatus(status: "done" | "active" | "archived") {
   const g = goal.value;
   if (!g) return;
-  const input: GoalInput = { title: g.title, note: g.note, mode: g.mode, due: g.due, status };
+  const input: GoalInput = { title: g.title, note: g.note, group: g.group, mode: g.mode, due: g.due, status };
   await saveGoal(g.id, input, g.version);
 }
 
 async function onDialogSave(input: GoalInput) {
   const e = editing.value;
   if (e === "new") {
-    const created = await addGoal(input);
-    if (created) openGoal(created.id);
+    // 创建后停留列表页，不自动跳进详情。
+    await addGoal(input);
   } else if (e) {
     await saveGoal(e.id, input, e.version);
   }
   editing.value = null;
+}
+
+/* 安排里程碑到某一天：写挂载任务的 due（里程碑本就是清单任务），落库后
+   重拉目标对齐；0 = 清除日期（回到未安排）。弹层里给今天/明天/下周一
+   三个常用档，再留一个自定义日期输入。 */
+const TOMORROW = TODAY + DAY;
+/* 下周一：今天是周一则取下一个周一（+7），周日取明天。 */
+const NEXT_MONDAY = TODAY + DAY * (((8 - new Date(TODAY).getDay()) % 7) || 7);
+/* 正在展开安排弹层的里程碑任务 id；null = 全部收起。 */
+const scheduling = ref<string | null>(null);
+
+async function scheduleTask(t: WireGoalTask, due: number) {
+  scheduling.value = null;
+  const item = st.items.find((i) => i.id === t.taskId);
+  if (!item) {
+    notify(C.syncError, "error");
+    loadGoals(true);
+    return;
+  }
+  if (await saveTask({ ...item, due })) await loadGoals(true);
+}
+
+function scheduleCustom(t: WireGoalTask, ev: Event) {
+  const v = (ev.target as HTMLInputElement).value;
+  if (!v) return;
+  const [y, m, d] = v.split("-").map(Number);
+  void scheduleTask(t, midnight(new Date(y, m - 1, d)));
+}
+
+/* 点弹层以外的地方收起。 */
+function onDocClick(ev: MouseEvent) {
+  if (!(ev.target as HTMLElement).closest(".goal-schedule")) scheduling.value = null;
+}
+onMounted(() => document.addEventListener("click", onDocClick));
+onUnmounted(() => document.removeEventListener("click", onDocClick));
+
+/* 进行中卡片的左移/右移：与相邻目标交换位置（整单提交由 reorderGoals 完成）。 */
+function moveGoal(g: WireGoal, dir: -1 | 1) {
+  const idx = activeGoals.value.findIndex((a) => a.id === g.id);
+  const neighbor = activeGoals.value[idx + dir];
+  if (idx < 0 || !neighbor) return;
+  void reorderGoals(g.id, neighbor.id);
 }
 
 const RING_CIRC = 213.6;
@@ -247,7 +298,7 @@ function ringOffset(g: WireGoal): number {
         v-for="(t, idx) in goal.tasks"
         :key="t.taskId"
         class="task-row"
-        :class="{ 'is-done': t.done, 'is-locked': isLocked(goal, idx) }"
+        :class="{ 'is-done': t.done, 'is-locked': isLocked(goal, idx), 'is-current': isCurrent(goal, idx) }"
       >
         <button
           v-if="!isLocked(goal, idx)"
@@ -266,12 +317,35 @@ function ringOffset(g: WireGoal): number {
           <span class="task-title">{{ t.title }}</span>
           <span class="task-meta">
             <span v-if="isLocked(goal, idx)">{{ C.goalLockedHint }}</span>
-            <span>{{ t.due || C.noDue }}</span>
+            <span>{{ t.due || C.goalUnscheduled }}</span>
             <span>{{ t.group }}</span>
             <span>{{ priorityLabel(t.priority) }}</span>
           </span>
         </div>
-        <button class="text-button" @click="detachTaskFromGoal(goal.id, t.taskId)">{{ C.goalDetach }}</button>
+        <div class="goal-task-actions">
+          <div class="goal-schedule">
+            <button
+              class="text-button"
+              :class="{ 'is-active': scheduling === t.taskId }"
+              @click="scheduling = scheduling === t.taskId ? null : t.taskId"
+            >
+              {{ C.goalSchedule }}
+            </button>
+            <div v-if="scheduling === t.taskId" class="goal-schedule-pop" role="menu">
+              <button class="text-button" @click="scheduleTask(t, TODAY)">{{ C.goalScheduleToday }}</button>
+              <button class="text-button" @click="scheduleTask(t, TOMORROW)">{{ C.goalScheduleTomorrow }}</button>
+              <button class="text-button" @click="scheduleTask(t, NEXT_MONDAY)">{{ C.goalScheduleNextMonday }}</button>
+              <label class="goal-schedule-custom">
+                {{ C.goalScheduleCustom }}
+                <input type="date" @change="scheduleCustom(t, $event)" />
+              </label>
+              <button v-if="t.due" class="text-button danger" @click="scheduleTask(t, 0)">
+                {{ C.goalScheduleClear }}
+              </button>
+            </div>
+          </div>
+          <button class="text-button danger" @click="detachTaskFromGoal(goal.id, t.taskId)">{{ C.goalDetach }}</button>
+        </div>
       </div>
 
       <!-- 列表末行的添加入口：点开计划页同款对话框。 -->
@@ -297,9 +371,35 @@ function ringOffset(g: WireGoal): number {
       <i />
     </div>
     <div v-if="activeGoals.length" class="goal-cards">
-      <button v-for="g in activeGoals" :key="g.id" class="goal-card" @click="openGoal(g.id)">
+      <!-- 卡片内有排序按钮，按钮套按钮不合法，故用 div + role="button" 保持键盘可达。 -->
+      <div
+        v-for="(g, idx) in activeGoals"
+        :key="g.id"
+        class="goal-card"
+        role="button"
+        tabindex="0"
+        @click="openGoal(g.id)"
+        @keydown.enter.prevent="openGoal(g.id)"
+      >
+        <button
+          v-if="idx > 0"
+          class="goal-move goal-move-prev"
+          :aria-label="C.goalMoveLeft + ' ' + g.title"
+          @click.stop="moveGoal(g, -1)"
+        >
+          <Icon name="arrow" :size="13" style="transform: rotate(180deg)" />
+        </button>
+        <button
+          v-if="idx < activeGoals.length - 1"
+          class="goal-move goal-move-next"
+          :aria-label="C.goalMoveRight + ' ' + g.title"
+          @click.stop="moveGoal(g, 1)"
+        >
+          <Icon name="arrow" :size="13" />
+        </button>
         <div class="goal-card-top">
           <h3>{{ g.title }}</h3>
+          <span v-if="g.group" class="mode-tag">{{ g.group }}</span>
           <span class="mode-tag">{{ g.mode === "sequential" ? C.goalModeSequential : C.goalModeParallel }}</span>
           <span class="health" :class="healthOf(g).kind">{{ healthOf(g).label }}</span>
         </div>
@@ -324,7 +424,7 @@ function ringOffset(g: WireGoal): number {
           </span>
           <span class="pct">{{ progressOf(g) }}{{ C.goalProgressUnit }}</span>
         </div>
-      </button>
+      </div>
     </div>
 
     <div class="section-heading">
@@ -336,6 +436,7 @@ function ringOffset(g: WireGoal): number {
       <button v-for="g in settledGoals" :key="g.id" class="goal-card is-done" @click="openGoal(g.id)">
         <div class="goal-card-top">
           <h3>{{ g.title }}</h3>
+          <span v-if="g.group" class="mode-tag">{{ g.group }}</span>
           <span class="mode-tag">{{ g.mode === "sequential" ? C.goalModeSequential : C.goalModeParallel }}</span>
           <span class="health" :class="healthOf(g).kind">{{ healthOf(g).label }}</span>
         </div>

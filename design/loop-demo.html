@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>回环 Loop · 看见你重复的自己</title>
+<style>
+  :root{
+    --bg:#f5f6f4; --card:#ffffff; --ink:#17211d; --muted:#6b7a74;
+    --teal:#0e9f8a; --teal-dark:#0b7f6e; --teal-soft:#e3f3ef;
+    --line:#e4e8e5; --warn:#e2725b; --amber:#dfa63f; --blue:#5b93c4;
+    --cat-blue:#6fb7c9; --cat-yellow:#e6cd7e; --cat-peach:#f0b49c;
+    --cat-coral:#e8836b; --cat-teal:#46a583; --cat-grayblue:#7d94a8;
+    --radius:14px; --shadow:0 1px 2px rgba(23,33,29,.05), 0 8px 24px rgba(23,33,29,.06);
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{
+    font-family:"PingFang SC","Microsoft YaHei","Noto Sans SC",system-ui,sans-serif;
+    background:var(--bg); color:var(--ink); font-size:14px; line-height:1.6;
+  }
+  .app{display:flex; min-height:100vh}
+
+  /* ── 侧栏 ── */
+  .sidebar{
+    width:216px; flex-shrink:0; background:var(--card); border-right:1px solid var(--line);
+    padding:24px 16px; display:flex; flex-direction:column; position:sticky; top:0; height:100vh;
+  }
+  .logo{font-size:20px; font-weight:700; letter-spacing:1px; margin-bottom:4px}
+  .logo span{color:var(--teal); font-weight:500; font-size:13px; margin-left:2px}
+  .tagline{font-size:11px; color:var(--muted); margin-bottom:28px}
+  .nav a{
+    display:block; padding:9px 12px; border-radius:10px; color:var(--ink);
+    text-decoration:none; font-size:14px; margin-bottom:2px; cursor:pointer;
+  }
+  .nav a:hover{background:#f0f2f0}
+  .nav a.active{background:var(--teal-soft); color:var(--teal-dark); font-weight:600}
+  .nav a .badge{
+    float:right; font-size:11px; background:var(--teal); color:#fff;
+    border-radius:9px; padding:0 7px; line-height:18px;
+  }
+  .sidebar-foot{margin-top:auto; font-size:11px; color:var(--muted); border-top:1px solid var(--line); padding-top:12px}
+
+  /* ── 主区 ── */
+  main{flex:1; padding:28px 36px 60px; max-width:980px}
+  .topbar{display:flex; align-items:baseline; gap:12px; margin-bottom:6px}
+  .topbar h1{font-size:22px; font-weight:700}
+  .topbar .date{color:var(--muted); font-size:13px}
+  .summary{color:var(--muted); font-size:13px; margin-bottom:24px}
+  .summary b{color:var(--ink)}
+
+  .view{display:none}
+  .view.active{display:block; animation:fade .25s ease}
+  @keyframes fade{from{opacity:0; transform:translateY(4px)}to{opacity:1; transform:none}}
+
+  /* ── 洞察卡 ── */
+  .card{
+    background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
+    box-shadow:var(--shadow); padding:20px 22px; margin-bottom:16px;
+  }
+  .card.featured{border-left:4px solid var(--warn)}
+  .card-head{display:flex; align-items:flex-start; gap:10px}
+  .conf{
+    font-size:11px; padding:2px 8px; border-radius:8px; white-space:nowrap; margin-top:2px;
+  }
+  .conf.verified{background:var(--teal-soft); color:var(--teal-dark)}
+  .conf.watching{background:#fdf3e0; color:var(--amber)}
+  .conf.dead{background:#f0f1f0; color:var(--muted); text-decoration:line-through}
+  .card-title{font-size:16px; font-weight:700; flex:1}
+  .card-body{color:#3d4a45; margin-top:8px}
+  .card-body .num{color:var(--warn); font-weight:700}
+  .card-body .num.teal{color:var(--teal-dark)}
+  .sample{font-size:12px; color:var(--muted); margin-top:8px}
+  .card-actions{display:flex; gap:8px; margin-top:14px; flex-wrap:wrap}
+  button{
+    font:inherit; border-radius:10px; padding:7px 14px; cursor:pointer; font-size:13px;
+    border:1px solid var(--line); background:#fff; color:var(--ink); transition:.15s;
+  }
+  button:hover{border-color:var(--teal); color:var(--teal-dark)}
+  button.primary{background:var(--teal); border-color:var(--teal); color:#fff}
+  button.primary:hover{background:var(--teal-dark); color:#fff}
+  button.ghost{border-color:transparent; color:var(--muted)}
+  button.ghost:hover{color:var(--teal-dark); border-color:transparent; background:var(--teal-soft)}
+  button.voted{background:var(--teal-soft); border-color:var(--teal); color:var(--teal-dark)}
+
+  /* 证据展开区 */
+  .evidence{display:none; margin-top:16px; border-top:1px dashed var(--line); padding-top:16px}
+  .evidence.open{display:block; animation:fade .25s ease}
+  .evidence h4{font-size:12px; color:var(--muted); font-weight:600; margin-bottom:10px; letter-spacing:.5px}
+  .chart-legend{display:flex; gap:16px; font-size:12px; color:var(--muted); margin-top:8px}
+  .dot{display:inline-block; width:9px; height:9px; border-radius:3px; margin-right:5px; vertical-align:0}
+  .hbar-row{display:flex; align-items:center; gap:10px; margin-bottom:8px; font-size:13px}
+  .hbar-row .lbl{width:130px; color:#3d4a45; flex-shrink:0}
+  .hbar{height:16px; border-radius:5px; background:var(--teal)}
+  .hbar.gray{background:#cfd8d4}
+  .hbar.warn{background:var(--warn)}
+  .hbar-val{font-weight:700; white-space:nowrap}
+
+  /* AI 对策 */
+  .plan{
+    display:none; margin-top:16px; background:linear-gradient(180deg,#f2faf7,#eef7f3);
+    border:1px solid #cde8e0; border-radius:12px; padding:16px 18px;
+  }
+  .plan.open{display:block; animation:fade .3s ease}
+  .plan h4{font-size:13px; color:var(--teal-dark); margin-bottom:10px}
+  .plan-item{display:flex; gap:10px; margin-bottom:10px; align-items:flex-start}
+  .plan-item .idx{
+    width:20px; height:20px; border-radius:50%; background:var(--teal); color:#fff;
+    font-size:11px; display:flex; align-items:center; justify-content:center; flex-shrink:0; margin-top:2px;
+  }
+  .plan-item .why{font-size:12px; color:var(--muted)}
+  .plan-foot{font-size:12px; color:var(--muted); border-top:1px dashed #cde8e0; padding-top:10px; margin-top:4px}
+
+  /* 模式库 */
+  .p-row{display:flex; align-items:center; gap:12px; padding:13px 4px; border-bottom:1px solid var(--line)}
+  .p-row:last-child{border-bottom:none}
+  .p-name{flex:1}
+  .p-name .sub{font-size:12px; color:var(--muted)}
+  .p-stat{font-size:12px; color:var(--muted); white-space:nowrap}
+
+  /* 时间轴 */
+  .tl{position:relative; padding-left:22px}
+  .tl::before{content:""; position:absolute; left:6px; top:6px; bottom:6px; width:2px; background:var(--line)}
+  .tl-item{position:relative; margin-bottom:18px}
+  .tl-item::before{
+    content:""; position:absolute; left:-20px; top:5px; width:10px; height:10px;
+    border-radius:50%; background:#fff; border:2px solid var(--teal);
+  }
+  .tl-item.hit::before{border-color:var(--warn); background:#fdeae5}
+  .tl-time{font-size:12px; color:var(--muted)}
+  .tl-tag{
+    font-size:11px; background:#fdeae5; color:var(--warn); border-radius:6px; padding:1px 7px; margin-left:6px;
+  }
+  .tl-cat{display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:6px; vertical-align:0}
+
+  /* 周报 */
+  .report-grid{display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin:16px 0}
+  .stat-box{background:#f7f9f7; border-radius:12px; padding:14px; text-align:center}
+  .stat-box .v{font-size:22px; font-weight:700; color:var(--teal-dark)}
+  .stat-box .k{font-size:12px; color:var(--muted); margin-top:2px}
+  .ai-line{
+    background:var(--teal-soft); border-radius:12px; padding:14px 16px; font-size:14px; margin-bottom:16px;
+  }
+  .ai-line b{color:var(--teal-dark)}
+
+  /* 设置 */
+  .set-row{display:flex; align-items:center; gap:12px; padding:13px 4px; border-bottom:1px solid var(--line)}
+  .set-row:last-child{border-bottom:none}
+  .set-row .lbl{flex:1}
+  .set-row .sub{font-size:12px; color:var(--muted)}
+  .switch{width:40px; height:22px; border-radius:11px; background:#d5dcd9; position:relative; cursor:pointer; flex-shrink:0; transition:.2s}
+  .switch::after{content:""; position:absolute; width:18px; height:18px; border-radius:50%; background:#fff; top:2px; left:2px; transition:.2s; box-shadow:0 1px 3px rgba(0,0,0,.2)}
+  .switch.on{background:var(--teal)}
+  .switch.on::after{left:20px}
+  .src-tag{font-size:11px; padding:2px 8px; border-radius:8px; white-space:nowrap}
+  .src-tag.on{background:var(--teal-soft); color:var(--teal-dark)}
+  .src-tag.soon{background:#f0f1f0; color:var(--muted)}
+  .privacy-note{font-size:12px; color:var(--muted); background:#f7f9f7; border-radius:10px; padding:12px 14px; margin-top:16px}
+
+  /* Toast */
+  .toast{
+    position:fixed; bottom:28px; left:50%; transform:translateX(-50%) translateY(20px);
+    background:var(--ink); color:#fff; padding:10px 20px; border-radius:10px; font-size:13px;
+    opacity:0; pointer-events:none; transition:.25s;
+  }
+  .toast.show{opacity:1; transform:translateX(-50%) translateY(0)}
+
+  .foot-note{margin-top:28px; font-size:12px; color:var(--muted); text-align:center}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <aside class="sidebar">
+    <div class="logo">回环<span>Loop</span></div>
+    <div class="tagline">看见你重复的自己</div>
+    <nav class="nav">
+      <a data-view="insights" class="active">今日洞察 <span class="badge">3</span></a>
+      <a data-view="patterns">模式库</a>
+      <a data-view="timeline">我的时间轴</a>
+      <a data-view="report">本周报告</a>
+      <a data-view="settings">设置</a>
+    </nav>
+    <div class="sidebar-foot">演示数据 · 概念原型<br>所有数据均在本地分析</div>
+  </aside>
+
+  <main>
+    <div class="topbar"><h1 id="view-title">今日洞察</h1><span class="date">2026 年 10 月 19 日 · 周一</span></div>
+    <div class="summary">本周已记录 <b>23</b> 件事 · <b>6</b> 次专注 · 模式引擎发现 <b>3</b> 个与你相关的规律</div>
+
+    <!-- ═══ 今日洞察 ═══ -->
+    <section id="view-insights" class="view active">
+
+      <!-- 洞察 A：周三滑铁卢 -->
+      <div class="card featured">
+        <div class="card-head">
+          <div class="card-title">周三，是你重要任务的「滑铁卢」</div>
+          <span class="conf verified">已验证 · 命中 9/12 周</span>
+        </div>
+        <div class="card-body">
+          近 12 周你在周三安排了 <span class="num">14</span> 个高优先级任务，只有 <span class="num teal">4</span> 个在当天完成，
+          <span class="num">7</span> 个滑到周四或更晚。其余工作日的当天完成率是 <b>78%</b>。
+        </div>
+        <div class="sample">样本：近 12 周 · 14 个高优任务 · 置信度较高（已排除节假日干扰）</div>
+        <div class="card-actions">
+          <button onclick="toggleEvidence('ev-a', this)">查看证据</button>
+          <button class="primary" onclick="togglePlan('plan-a')">让 AI 生成本周对策</button>
+          <button class="ghost" onclick="vote(this)">👍 有用 <span>8</span></button>
+          <button class="ghost" onclick="vote(this)">👎 不准</button>
+        </div>
+
+        <div class="evidence" id="ev-a">
+          <h4>证据 · 近 12 周周三高优任务：计划 vs 当天完成</h4>
+          <svg id="chart-a" width="640" height="150" viewBox="0 0 640 150"></svg>
+          <div class="chart-legend">
+            <span><span class="dot" style="background:#cfd8d4"></span>周三安排的高优任务</span>
+            <span><span class="dot" style="background:var(--teal)"></span>当天完成</span>
+            <span><span class="dot" style="background:var(--warn)"></span>滑到周四及以后</span>
+          </div>
+        </div>
+
+        <div class="plan" id="plan-a">
+          <h4>🛡 本周对策 · 基于你的模式生成</h4>
+          <div class="plan-item"><div class="idx">1</div><div>
+            把本周三 15:00 的「季度复盘材料」移到 <b>周四 09:30</b>。
+            <div class="why">你周四上午的完成率是 91%，是全周最高的时段。</div>
+            <div style="margin-top:6px"><button onclick="toast('已应用到日历（演示）：季度复盘材料 → 周四 09:30')">应用到日历</button></div>
+          </div></div>
+          <div class="plan-item"><div class="idx">2</div><div>
+            周三只排<b>低认知任务</b>（回复、整理、行政），深度工作留给上午。
+            <div class="why">你在周三完成的 4 个任务里，3 个是 10 分钟以内的低认知任务。</div>
+          </div></div>
+          <div class="plan-item"><div class="idx">3</div><div>
+            周二 20:00 提醒你把「季度复盘材料」<b>拆成 3 步</b>。
+            <div class="why">你拆过步骤的任务逾期率下降 60%（模式库 · 已验证）。</div>
+            <div style="margin-top:6px"><button onclick="toast('已设置提醒（演示）：周二 20:00 拆解任务')">设置提醒</button></div>
+          </div></div>
+          <div class="plan-foot">秘书会盯着：如果周四 10:00 你还没开始，我会再次提醒你。你不需要记住这件事。</div>
+        </div>
+      </div>
+
+      <!-- 洞察 B：高优标签是症状 -->
+      <div class="card">
+        <div class="card-head">
+          <div class="card-title">「!!! 高优」标签，反而预示拖延</div>
+          <span class="conf watching">观察中 · 样本 31</span>
+        </div>
+        <div class="card-body">
+          标了 <b>!!!</b> 的任务平均逾期 <span class="num">2.4 天</span>，未标优先级的只逾期 <span class="num teal">0.7 天</span>。
+          可能的解释：你不是被高优任务拖住，而是<b>把最难的事都标成了高优</b>——高优不是原因，是症状。
+        </div>
+        <div class="sample">样本尚小，结论可能随数据变化 · 引擎会持续观察，你标记「有用/不准」会加速校准</div>
+        <div class="card-actions">
+          <button onclick="toggleEvidence('ev-b', this)">查看证据</button>
+          <button class="ghost" onclick="vote(this)">👍 有用 <span>5</span></button>
+          <button class="ghost" onclick="vote(this)">👎 不准</button>
+        </div>
+        <div class="evidence" id="ev-b">
+          <h4>证据 · 平均逾期天数对比</h4>
+          <div id="chart-b"></div>
+          <div class="chart-legend"><span>灰色 = 未标优先级（42 个） · 珊瑚色 = 标 !!! 的任务（31 个）</span></div>
+        </div>
+      </div>
+
+      <!-- 洞察 C：黄金时段 -->
+      <div class="card">
+        <div class="card-head">
+          <div class="card-title">你的黄金时段是 9:30–11:30，但重要任务只有 32% 排在那时</div>
+          <span class="conf verified">已验证 · 命中 11/12 周</span>
+        </div>
+        <div class="card-body">
+          9:30–11:30 开始的任务完成率 <span class="num teal">86%</span>，14:00 之后只有 <span class="num">54%</span>。
+          而你的高优任务有 <b>41%</b> 被排在下午。
+        </div>
+        <div class="card-actions">
+          <button onclick="toggleEvidence('ev-c', this)">查看证据</button>
+          <button class="ghost" onclick="vote(this)">👍 有用 <span>6</span></button>
+          <button class="ghost" onclick="vote(this)">👎 不准</button>
+        </div>
+        <div class="evidence" id="ev-c">
+          <h4>证据 · 各时段完成率</h4>
+          <div id="chart-c"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══ 模式库 ═══ -->
+    <section id="view-patterns" class="view">
+      <div class="card">
+        <div class="p-row">
+          <div class="p-name">周三是高优任务的低谷<div class="sub">首次发现 2026-08-05 · 干预方式：提前挪日程 + 拆解提醒</div></div>
+          <span class="conf verified">已验证</span><span class="p-stat">命中 9/12 周</span>
+        </div>
+        <div class="p-row">
+          <div class="p-name">上午是黄金时段<div class="sub">首次发现 2026-07-22 · 干预方式：新任务默认建议上午时段</div></div>
+          <span class="conf verified">已验证</span><span class="p-stat">命中 11/12 周</span>
+        </div>
+        <div class="p-row">
+          <div class="p-name">拆步骤可降低逾期<div class="sub">首次发现 2026-08-30 · 干预方式：大任务创建时提示拆解</div></div>
+          <span class="conf verified">已验证</span><span class="p-stat">逾期率 ↓60%</span>
+        </div>
+        <div class="p-row">
+          <div class="p-name">「!!!」标签预示拖延<div class="sub">首次发现 2026-09-18 · 干预方式：标记时提示「是否需要先拆解」</div></div>
+          <span class="conf watching">观察中</span><span class="p-stat">样本 31</span>
+        </div>
+        <div class="p-row">
+          <div class="p-name">22 点后开始的番茄，83% 被放弃<div class="sub">首次发现 2026-09-25 · 干预方式：21:30 后建议改到次日</div></div>
+          <span class="conf watching">观察中</span><span class="p-stat">样本 24</span>
+        </div>
+        <div class="p-row">
+          <div class="p-name">周一上午从不安排重要事<div class="sub">首次发现 2026-07-30 · 近 3 周被打破</div></div>
+          <span class="conf dead">已失效</span><span class="p-stat">连续 3 周未命中</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══ 时间轴 ═══ -->
+    <section id="view-timeline" class="view">
+      <div class="card">
+        <h4 style="font-size:12px;color:var(--muted);margin-bottom:16px">上周三 · 2026-10-14 的行为记录（引擎标注了模式命中点）</h4>
+        <div class="tl">
+          <div class="tl-item"><div class="tl-time">09:12</div>完成「回复客户邮件」<span class="tl-cat" style="background:var(--cat-blue)"></span>#工作</div>
+          <div class="tl-item hit"><div class="tl-time">10:30</div>创建高优任务「季度复盘材料」并排在<b>本周三</b><span class="tl-tag">⚠ 模式命中：高优 → 周三</span></div>
+          <div class="tl-item"><div class="tl-time">11:05</div>完成「整理发票」<span class="tl-cat" style="background:var(--cat-grayblue)"></span>#行政</div>
+          <div class="tl-item hit"><div class="tl-time">15:00</div>「季度复盘材料」推迟 → 周四<span class="tl-tag">模式再次命中</span></div>
+          <div class="tl-item"><div class="tl-time">16:40</div>完成「团队周报」<span class="tl-cat" style="background:var(--cat-peach)"></span>#工作</div>
+          <div class="tl-item hit"><div class="tl-time">22:05</div>开始番茄 · 23:11 放弃<span class="tl-tag">⚠ 模式命中：22 点后番茄易放弃</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══ 本周报告 ═══ -->
+    <section id="view-report" class="view">
+      <div class="card">
+        <div class="ai-line">🪞 <b>回环摘要：</b>你正在重复上周的模式——周三又积压了两件高优。好消息是：周四上午是你的堡垒，把最难的事放那里，这周就会不一样。</div>
+        <div class="report-grid">
+          <div class="stat-box"><div class="v">23</div><div class="k">本周完成</div></div>
+          <div class="stat-box"><div class="v" style="color:var(--warn)">4</div><div class="k">逾期</div></div>
+          <div class="stat-box"><div class="v">6h40m</div><div class="k">专注时长</div></div>
+          <div class="stat-box"><div class="v">5</div><div class="k">最长连续天数</div></div>
+        </div>
+        <div class="card-actions">
+          <button class="primary" onclick="toast('已生成分享海报（演示）：「我的周三滑铁卢，被 AI 发现了」')">生成分享海报</button>
+          <button onclick="toast('完整报告已导出为 PDF（演示）')">导出完整报告</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══ 设置 ═══ -->
+    <section id="view-settings" class="view">
+      <div class="card">
+        <div class="set-row"><div class="lbl">时间模式检测<div class="sub">黄金时段、每周低谷、季节性波动</div></div><div class="switch on" onclick="flip(this)"></div></div>
+        <div class="set-row"><div class="lbl">任务模式检测<div class="sub">标签与拖延的关系、拆解与逾期的关系</div></div><div class="switch on" onclick="flip(this)"></div></div>
+        <div class="set-row"><div class="lbl">计划偏差分析<div class="sub">预估时间 vs 实际用时（需要任务估算字段）</div></div><div class="switch" onclick="flip(this)"></div></div>
+        <div class="set-row"><div class="lbl">分析位置<div class="sub">本地模型（Ollama）· 数据不出门</div></div><span class="src-tag on">本地优先</span></div>
+      </div>
+      <div class="card">
+        <h4 style="font-size:13px;margin-bottom:8px">数据源</h4>
+        <div class="set-row"><div class="lbl">任务与专注<div class="sub">ToDoDay · 已连接</div></div><span class="src-tag on">已连接</span></div>
+        <div class="set-row"><div class="lbl">微信读书<div class="sub">读完的书、阅读时段、弃书点</div></div><span class="src-tag soon">即将支持</span></div>
+        <div class="set-row"><div class="lbl">健身数据<div class="sub">训练时段 vs 任务完成率：能量模式</div></div><span class="src-tag soon">即将支持</span></div>
+      </div>
+      <div class="privacy-note">
+        🔐 诚实承诺：样本不足的规律不会被展示为结论；你的原始数据和行为模式只存在你自己的数据库里；
+        每条洞察都可以整体导出或随账号删除。引擎说「不确定」的时候，是真的不确定。
+      </div>
+    </section>
+
+    <div class="foot-note">「回环 Loop」概念原型 · 演示数据为模拟 · 设计与 ToDoDay 同一数据底座</div>
+  </main>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  /* ── 视图切换 ── */
+  const titles = {insights:'今日洞察', patterns:'模式库', timeline:'我的时间轴', report:'本周报告', settings:'设置'};
+  document.querySelectorAll('.nav a').forEach(a=>{
+    a.addEventListener('click', ()=>{
+      document.querySelectorAll('.nav a').forEach(x=>x.classList.remove('active'));
+      a.classList.add('active');
+      document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+      document.getElementById('view-'+a.dataset.view).classList.add('active');
+      document.getElementById('view-title').textContent = titles[a.dataset.view];
+    });
+  });
+
+  /* ── 展开/收起 ── */
+  function toggleEvidence(id, btn){
+    const el = document.getElementById(id);
+    el.classList.toggle('open');
+    btn.textContent = el.classList.contains('open') ? '收起证据' : '查看证据';
+  }
+  function togglePlan(id){
+    document.getElementById(id).classList.toggle('open');
+  }
+  function vote(btn){
+    btn.classList.toggle('voted');
+    const span = btn.querySelector('span');
+    if(span && !btn.dataset.voted){
+      span.textContent = +span.textContent + 1; btn.dataset.voted = 1;
+      toast('已记录，引擎会用它校准这个模式');
+    }
+  }
+  function flip(el){ el.classList.toggle('on'); }
+  function toast(msg){
+    const t = document.getElementById('toast');
+    t.textContent = msg; t.classList.add('show');
+    clearTimeout(t._h); t._h = setTimeout(()=>t.classList.remove('show'), 2400);
+  }
+
+  /* ── 证据图 A：12 周 计划vs完成（滑走部分用珊瑚色堆叠） ── */
+  (function(){
+    const svg = document.getElementById('chart-a');
+    const plan = [1,1,0,2,1,1,2,1,1,2,1,1];
+    const done = [0,1,0,0,1,0,0,1,0,0,1,0];
+    const W=640,H=150,pad=26,bw=30,gap=(W-pad*2)/12;
+    let s = `<line x1="${pad}" y1="${H-20}" x2="${W-pad}" y2="${H-20}" stroke="#e4e8e5"/>`;
+    plan.forEach((p,i)=>{
+      const x = pad + i*gap + gap/2 - bw/2;
+      const yDone = H-20 - done[i]*38;
+      const yPlan = H-20 - p*38;
+      if(p>0){
+        s += `<rect x="${x}" y="${yPlan}" width="${bw}" height="${H-20-yPlan}" rx="4" fill="#cfd8d4"/>`;
+        if(done[i]>0) s += `<rect x="${x}" y="${yDone}" width="${bw}" height="${(H-20-yDone)}" rx="4" fill="#0e9f8a"/>`;
+        if(p-done[i]>0) s += `<rect x="${x}" y="${yPlan}" width="${bw}" height="${(p-done[i])*38}" rx="4" fill="#e2725b" opacity=".85"/>`;
+      } else {
+        s += `<circle cx="${x+bw/2}" cy="${H-23}" r="3" fill="#d5dcd9"/>`;
+      }
+      s += `<text x="${x+bw/2}" y="${H-6}" font-size="10" fill="#9aa8a2" text-anchor="middle">W${i+1}</text>`;
+    });
+    svg.innerHTML = s;
+  })();
+
+  /* ── 证据图 B：横向对比条 ── */
+  (function(){
+    const rows = [
+      {lbl:'标 !!! 的任务（31 个）', val:2.4, color:'warn', max:2.4},
+      {lbl:'未标优先级（42 个）', val:0.7, color:'gray', max:2.4},
+    ];
+    document.getElementById('chart-b').innerHTML = rows.map(r=>`
+      <div class="hbar-row">
+        <div class="lbl">${r.lbl}</div>
+        <div class="hbar ${r.color}" style="width:${r.val/r.max*300}px"></div>
+        <div class="hbar-val">${r.val} 天</div>
+      </div>`).join('');
+  })();
+
+  /* ── 证据图 C：各时段完成率 ── */
+  (function(){
+    const rows = [
+      {lbl:'9:30–11:30', val:86, color:''},
+      {lbl:'11:30–14:00', val:71, color:'gray'},
+      {lbl:'14:00–17:00', val:54, color:'warn'},
+      {lbl:'19:00–22:00', val:62, color:'gray'},
+    ];
+    document.getElementById('chart-c').innerHTML = rows.map(r=>`
+      <div class="hbar-row">
+        <div class="lbl">${r.lbl}</div>
+        <div class="hbar ${r.color}" style="width:${r.val/100*300}px"></div>
+        <div class="hbar-val">${r.val}%</div>
+      </div>`).join('');
+  })();
+</script>
+</body>
+</html>

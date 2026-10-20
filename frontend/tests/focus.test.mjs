@@ -91,7 +91,7 @@ test("the bell fires from the module, not the page, so it rings on other pages",
 });
 
 test("today's tasks can be completed from the focus page", () => {
-  assert.match(view, /import \{ st, toggleTask \} from "\.\.\/store"/);
+  assert.match(view, /import \{ st, toggleTask, goalOfTask \} from "\.\.\/store"/);
   assert.match(view, /function markDone/);
   assert.match(view, /@click="markDone\(i\)"/);
   // 勾选是独立控件，不能把按钮套在按钮里。

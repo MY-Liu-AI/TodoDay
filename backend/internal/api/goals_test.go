@@ -25,14 +25,20 @@ func TestGoalsLifecycle(t *testing.T) {
 	}
 
 	resp, out := e.do("POST", wu(wid)+"/goals", map[string]any{
-		"title": "发布会筹备", "note": "月底发布", "mode": "sequential", "due": "2026-10-31", "status": "active",
+		"title": "发布会筹备", "note": "月底发布", "group": "工作", "mode": "sequential", "due": "2026-10-31", "status": "active",
 	})
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("create goal: %d", resp.StatusCode)
 	}
 	gid := int64(out["id"].(float64))
-	if out["mode"] != "sequential" || out["due"] != "2026-10-31" || out["createdAt"] == "" {
+	if out["mode"] != "sequential" || out["due"] != "2026-10-31" || out["createdAt"] == "" || out["group"] != "工作" {
 		t.Fatalf("目标字段不对：%v", out)
+	}
+
+	// 分组标签超长 → 400。
+	resp, _ = e.do("POST", wu(wid)+"/goals", map[string]any{"title": "x", "group": string(make([]byte, 41))})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("超长分组应 400，得到 %d", resp.StatusCode)
 	}
 
 	resp, out = e.do("POST", wu(wid)+"/goals/"+itoa(gid)+"/tasks", map[string]any{"taskId": taskIDs[0]})
@@ -104,6 +110,41 @@ func TestGoalsLifecycle(t *testing.T) {
 	resp, _ = e.do("POST", wu(wid)+"/goals/"+itoa(gid)+"/tasks/reorder", map[string]any{"ids": []string{taskIDs[0], taskIDs[1]}})
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("重排数量不符应 400，得到 %d", resp.StatusCode)
+	}
+
+	// 目标整体重排：再建两个目标，把三个逆序提交，列表顺序跟着变。
+	resp, _ = e.do("POST", wu(wid)+"/goals", map[string]any{"title": "目标二"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create 2: %d", resp.StatusCode)
+	}
+	resp, _ = e.do("POST", wu(wid)+"/goals", map[string]any{"title": "目标三"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create 3: %d", resp.StatusCode)
+	}
+	_, out = e.do("GET", wu(wid)+"/goals", nil)
+	var all []any
+	for _, g := range out["goals"].([]any) {
+		all = append(all, g.(map[string]any)["id"])
+	}
+	if len(all) != 3 {
+		t.Fatalf("应有 3 个目标：%v", all)
+	}
+	reversed := []any{all[2], all[1], all[0]}
+	resp, _ = e.do("POST", wu(wid)+"/goals/reorder", map[string]any{"ids": reversed})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("reorder: %d", resp.StatusCode)
+	}
+	_, out = e.do("GET", wu(wid)+"/goals", nil)
+	got := out["goals"].([]any)
+	for i := range reversed {
+		if got[i].(map[string]any)["id"] != reversed[i] {
+			t.Fatalf("目标顺序未生效：%v", got)
+		}
+	}
+	// 数量不符 → 400。
+	resp, _ = e.do("POST", wu(wid)+"/goals/reorder", map[string]any{"ids": all[:2]})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("目标重排数量不符应 400，得到 %d", resp.StatusCode)
 	}
 }
 

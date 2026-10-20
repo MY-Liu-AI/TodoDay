@@ -14,8 +14,9 @@ type Goal struct {
 	ID        int64      `json:"id"`
 	Title     string     `json:"title"`
 	Note      string     `json:"note"`
-	Mode      string     `json:"mode"` // parallel | sequential
-	Due       string     `json:"due"`  // YYYY-MM-DD 或 ""
+	Group     string     `json:"group"` // 分组标签，"" = 未分组（与任务分组同名同色）
+	Mode      string     `json:"mode"`  // parallel | sequential
+	Due       string     `json:"due"`   // YYYY-MM-DD 或 ""
 	Status    string     `json:"status"`
 	Position  int64      `json:"position"`
 	Version   int64      `json:"version"`
@@ -39,6 +40,7 @@ type GoalTask struct {
 type GoalInput struct {
 	Title  string
 	Note   string
+	Group  string // 分组标签，"" = 未分组
 	Mode   string
 	Due    string // "" 无排期
 	Status string // active | done | archived
@@ -81,9 +83,9 @@ func loadGoalTx(ctx context.Context, tx *sql.Tx, wsID, id int64) (*Goal, error) 
 	var g Goal
 	var due sql.NullString
 	err := tx.QueryRowContext(ctx,
-		`SELECT id, title, note, mode, due, status, position, version, substr(created_at, 1, 10)
+		`SELECT id, title, note, group_name, mode, due, status, position, version, substr(created_at, 1, 10)
 		 FROM goals WHERE id = ? AND workspace_id = ? AND deleted_at IS NULL`, id, wsID).
-		Scan(&g.ID, &g.Title, &g.Note, &g.Mode, &due, &g.Status, &g.Position, &g.Version, &g.CreatedAt)
+		Scan(&g.ID, &g.Title, &g.Note, &g.Group, &g.Mode, &due, &g.Status, &g.Position, &g.Version, &g.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -106,7 +108,7 @@ func (s *Store) ListGoals(ctx context.Context, wsID int64) ([]Goal, error) {
 	var goals []Goal
 	err := s.ExecTx(ctx, func(tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx,
-			`SELECT id, title, note, mode, due, status, position, version, substr(created_at, 1, 10)
+			`SELECT id, title, note, group_name, mode, due, status, position, version, substr(created_at, 1, 10)
 			 FROM goals WHERE workspace_id = ? AND deleted_at IS NULL
 			 ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END, position ASC, id ASC`, wsID)
 		if err != nil {
@@ -116,7 +118,7 @@ func (s *Store) ListGoals(ctx context.Context, wsID int64) ([]Goal, error) {
 		for rows.Next() {
 			var g Goal
 			var due sql.NullString
-			if err := rows.Scan(&g.ID, &g.Title, &g.Note, &g.Mode, &due, &g.Status, &g.Position, &g.Version, &g.CreatedAt); err != nil {
+			if err := rows.Scan(&g.ID, &g.Title, &g.Note, &g.Group, &g.Mode, &due, &g.Status, &g.Position, &g.Version, &g.CreatedAt); err != nil {
 				return err
 			}
 			if due.Valid {
@@ -164,9 +166,9 @@ func (s *Store) CreateGoal(ctx context.Context, wsID, userID int64, in GoalInput
 			due = in.Due
 		}
 		res, err := tx.ExecContext(ctx,
-			`INSERT INTO goals (workspace_id, created_by, title, note, mode, due, status, position, version, created_at, updated_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
-			wsID, userID, in.Title, in.Note, in.Mode, due, in.Status, pos, now, now)
+			`INSERT INTO goals (workspace_id, created_by, title, note, group_name, mode, due, status, position, version, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+			wsID, userID, in.Title, in.Note, in.Group, in.Mode, due, in.Status, pos, now, now)
 		if err != nil {
 			return err
 		}
@@ -198,9 +200,9 @@ func (s *Store) UpdateGoal(ctx context.Context, wsID, id int64, in GoalInput, ve
 			due = in.Due
 		}
 		res, err := tx.ExecContext(ctx,
-			`UPDATE goals SET title = ?, note = ?, mode = ?, due = ?, status = ?, version = version + 1, updated_at = ?
+			`UPDATE goals SET title = ?, note = ?, group_name = ?, mode = ?, due = ?, status = ?, version = version + 1, updated_at = ?
 			 WHERE id = ? AND workspace_id = ? AND deleted_at IS NULL AND version = ?`,
-			in.Title, in.Note, in.Mode, due, in.Status, now, id, wsID, version)
+			in.Title, in.Note, in.Group, in.Mode, due, in.Status, now, id, wsID, version)
 		if err != nil {
 			return err
 		}
@@ -387,6 +389,39 @@ func (s *Store) DetachGoalTask(ctx context.Context, wsID, goalID int64, taskID s
 		return nil, err
 	}
 	return out, nil
+}
+
+// ReorderGoals 原子地重排工作区内全部未删除目标。展示顺序（active 在前、
+// settled 沉底）由调用方决定，这里只如实落 position。ids 必须正好是当前
+// 全部目标 id，数量不符拒绝（部分写入不能发生）。
+func (s *Store) ReorderGoals(ctx context.Context, wsID int64, ids []int64) error {
+	now := formatTime(nowUTC())
+	return s.ExecTx(ctx, func(tx *sql.Tx) error {
+		var count int64
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COUNT(1) FROM goals WHERE workspace_id = ? AND deleted_at IS NULL`, wsID).Scan(&count); err != nil {
+			return err
+		}
+		if int(count) != len(ids) {
+			return fmt.Errorf("%w: reorder expects %d ids, got %d", ErrInvalid, count, len(ids))
+		}
+		for pos, id := range ids {
+			res, err := tx.ExecContext(ctx,
+				`UPDATE goals SET position = ?, updated_at = ? WHERE id = ? AND workspace_id = ? AND deleted_at IS NULL`,
+				pos, now, id, wsID)
+			if err != nil {
+				return err
+			}
+			n, err := res.RowsAffected()
+			if err != nil {
+				return err
+			}
+			if n == 0 {
+				return fmt.Errorf("%w: unknown goal %d", ErrNotFound, id)
+			}
+		}
+		return nil
+	})
 }
 
 // ReorderGoalTasks 原子地重排目标内任务顺序（串行模式的解锁顺序）。
