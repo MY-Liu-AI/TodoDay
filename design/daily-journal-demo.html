@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>每日记录 · 设计方案 Demo</title>
+<style>
+  /* 与 frontend/src/styles/planner.css 同一套设计变量（浅色默认） */
+  :root {
+    --bg: #f6f8f8; --panel: #fff; --raised: #f3f5f4;
+    --ink: #202622; --muted: #656d68; --faint: #737b76;
+    --line: #e3e7e4; --line-soft: #edf0ee;
+    --accent: oklch(0.49 0.085 185); --accent-ink: #fff; --accent-soft: #e4f2ef;
+    --neg: #a74636; --warn: #876322;
+    --sans: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+    --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: var(--sans); background: var(--bg); color: var(--ink);
+    display: flex; min-height: 100vh; font-size: 14px; line-height: 1.6;
+  }
+  button { font-family: inherit; cursor: pointer; }
+  input { font-family: inherit; }
+
+  /* ── 侧栏（与主应用同款结构） ── */
+  .side {
+    width: 216px; flex: none; background: var(--panel); border-right: 1px solid var(--line);
+    display: flex; flex-direction: column; padding: 20px 12px; position: sticky; top: 0; height: 100vh;
+  }
+  .brand { font-size: 17px; font-weight: 700; letter-spacing: .02em; padding: 6px 12px 22px; }
+  .brand em { color: var(--accent); font-style: normal; }
+  .nav { display: flex; flex-direction: column; gap: 2px; }
+  .nav button {
+    display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+    border: 0; background: none; border-radius: 8px; color: var(--muted); font-size: 14px; text-align: left;
+  }
+  .nav button:hover { background: var(--raised); color: var(--ink); }
+  .nav button.is-active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .side-foot { margin-top: auto; font-size: 11px; color: var(--faint); padding: 0 12px; line-height: 1.8; }
+
+  /* ── 主列 ── */
+  main { flex: 1; min-width: 0; padding: 28px clamp(20px, 5vw, 64px) 120px; }
+  .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; }
+  .overline { font-size: 11px; letter-spacing: .18em; color: var(--faint); }
+  h1 { font-size: 24px; margin: 2px 0 18px; }
+
+  .datebar { display: flex; align-items: center; gap: 8px; }
+  .datebar .day-title { font-size: 16px; font-weight: 600; min-width: 170px; text-align: center; }
+  .icon-btn {
+    width: 32px; height: 32px; display: grid; place-items: center;
+    border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--muted);
+    transition: all .16s var(--ease);
+  }
+  .icon-btn:hover { color: var(--accent); border-color: var(--accent); }
+  .search {
+    display: flex; align-items: center; gap: 6px; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; color: var(--faint);
+  }
+  .search input { border: 0; outline: 0; background: none; font-size: 13px; color: var(--ink); width: 160px; }
+
+  /* ── AI 摘要卡 ── */
+  .summary {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 16px 18px; margin: 14px 0 26px;
+  }
+  .summary-head { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .summary-head .bot { color: var(--accent); font-weight: 600; }
+  .summary p { font-size: 14px; }
+  .summary .regen {
+    margin-left: auto; border: 0; background: none; color: var(--muted); font-size: 12px;
+    display: flex; align-items: center; gap: 4px; border-radius: 6px; padding: 4px 8px;
+  }
+  .summary .regen:hover { color: var(--accent); background: var(--accent-soft); }
+  .summary .spin { animation: spin 1s linear infinite; display: inline-block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── 状态徽章 ── */
+  .badge {
+    font-size: 10px; padding: 1px 7px; border-radius: 4px; border: 1px solid var(--line);
+    color: var(--faint); flex: none;
+  }
+  .badge.done { color: var(--accent); border-color: var(--accent); }
+  .badge.wait { color: var(--warn); border-color: var(--warn); }
+
+  /* ── 时间线 ── */
+  .timeline { position: relative; padding-left: 26px; }
+  .timeline:before {
+    content: ""; position: absolute; left: 7px; top: 8px; bottom: 8px;
+    width: 2px; background: var(--line); border-radius: 2px;
+  }
+  .moment { position: relative; margin-bottom: 14px; }
+  .moment:before {
+    content: ""; position: absolute; left: -25px; top: 20px; width: 10px; height: 10px;
+    border-radius: 50%; background: var(--panel); border: 2px solid var(--accent); z-index: 1;
+  }
+  .moment.is-wait:before { border-color: var(--warn); }
+  .moment-card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 14px 16px; transition: border-color .16s var(--ease); cursor: pointer;
+  }
+  .moment-card:hover { border-color: var(--accent); }
+  .moment-head { display: flex; align-items: center; gap: 10px; }
+  .moment-time { font-family: ui-monospace, monospace; font-size: 12px; color: var(--faint); flex: none; }
+  .moment-kind {
+    width: 24px; height: 24px; flex: none; display: grid; place-items: center;
+    border-radius: 6px; background: var(--raised); color: var(--muted);
+  }
+  .moment-title { font-weight: 600; font-size: 14px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .moment-body { margin: 8px 0 0 34px; color: var(--muted); font-size: 13px; }
+  .moment-body .raw-toggle {
+    border: 0; background: none; color: var(--faint); font-size: 12px; padding: 0; margin-top: 4px;
+  }
+  .moment-body .raw-toggle:hover { color: var(--accent); }
+  .raw-box {
+    margin-top: 8px; padding: 10px 12px; background: var(--raised); border-radius: 8px;
+    font-size: 12px; color: var(--muted); white-space: pre-wrap;
+  }
+  .photos { display: flex; gap: 8px; margin: 10px 0 0 34px; }
+  .photo {
+    width: 96px; height: 96px; border-radius: 8px; flex: none; cursor: zoom-in;
+    display: grid; place-items: center; color: rgba(255,255,255,.9); position: relative; overflow: hidden;
+  }
+  .photo small {
+    position: absolute; bottom: 4px; left: 8px; right: 8px; font-size: 10px; color: rgba(255,255,255,.95);
+    text-shadow: 0 1px 2px rgba(0,0,0,.3); overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  }
+  .place-chip {
+    display: inline-flex; align-items: center; gap: 5px; margin: 10px 0 0 34px;
+    font-size: 12px; color: var(--accent); background: var(--accent-soft);
+    padding: 3px 10px; border-radius: 999px;
+  }
+
+  /* ── 过滤器 / 空态 / 补记 ── */
+  .filters { display: flex; gap: 6px; margin: 26px 0 0; }
+  .filters button {
+    border: 1px solid var(--line); background: var(--panel); color: var(--muted);
+    font-size: 12px; padding: 5px 14px; border-radius: 999px;
+  }
+  .filters button.is-active { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  .add-backfill {
+    margin-top: 18px; width: 100%; padding: 12px; border: 1px dashed var(--line); border-radius: 10px;
+    background: none; color: var(--faint); font-size: 13px; display: flex; align-items: center; justify-content: center; gap: 6px;
+  }
+  .add-backfill:hover { color: var(--accent); border-color: var(--accent); }
+  .empty { text-align: center; color: var(--faint); padding: 60px 0; font-size: 13px; }
+
+  /* ── 详情抽屉 ── */
+  .drawer-mask {
+    position: fixed; inset: 0; background: rgba(20,26,22,.32); opacity: 0; pointer-events: none;
+    transition: opacity .2s var(--ease); z-index: 40;
+  }
+  .drawer {
+    position: fixed; top: 0; right: 0; bottom: 0; width: min(420px, 92vw); background: var(--panel);
+    border-left: 1px solid var(--line); z-index: 41; padding: 22px; overflow-y: auto;
+    transform: translateX(100%); transition: transform .24s var(--ease);
+  }
+  .drawer.open { transform: translateX(0); }
+  .drawer-mask.open { opacity: 1; pointer-events: auto; }
+  .drawer h3 { font-size: 16px; margin: 10px 0 4px; outline: none; border-radius: 6px; padding: 2px 6px; }
+  .drawer h3[contenteditable]:hover, .drawer .d-content[contenteditable]:hover { background: var(--raised); }
+  .drawer h3:focus, .drawer .d-content:focus { background: var(--accent-soft); outline: 1px solid var(--accent); }
+  .drawer .d-meta { font-size: 12px; color: var(--faint); display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .d-content { margin: 14px 0; font-size: 14px; min-height: 60px; outline: none; border-radius: 6px; padding: 6px; }
+  .drawer .photos { margin: 10px 0; }
+  .drawer .photo { width: 108px; height: 108px; }
+  .d-section { font-size: 11px; letter-spacing: .12em; color: var(--faint); margin: 18px 0 6px; }
+  .d-actions { display: flex; gap: 8px; margin-top: 26px; flex-wrap: wrap; }
+  .btn {
+    border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+    padding: 8px 16px; border-radius: 8px; font-size: 13px;
+  }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  .btn.danger { color: var(--neg); }
+  .btn.danger:hover { border-color: var(--neg); color: var(--neg); }
+
+  /* ── 灯箱 / toast / 引导 ── */
+  .lightbox {
+    position: fixed; inset: 0; z-index: 50; background: rgba(15,20,17,.82);
+    display: none; place-items: center; cursor: zoom-out;
+  }
+  .lightbox.open { display: grid; }
+  .lightbox .ph { width: min(76vw, 720px); aspect-ratio: 4/3; border-radius: 14px; display: grid; place-items: center; color: rgba(255,255,255,.9); }
+  .toast {
+    position: fixed; left: 50%; bottom: 28px; transform: translate(-50%, 20px); opacity: 0;
+    background: var(--ink); color: var(--bg); padding: 10px 18px; border-radius: 10px; font-size: 13px;
+    display: flex; gap: 14px; align-items: center; z-index: 60; transition: all .2s var(--ease); pointer-events: none;
+  }
+  .toast.show { transform: translate(-50%, 0); opacity: 1; pointer-events: auto; }
+  .toast button { border: 0; background: none; color: var(--accent-soft); font-size: 13px; }
+  .hint-bar {
+    display: flex; align-items: center; gap: 10px; background: var(--accent-soft); color: var(--ink);
+    border-radius: 10px; padding: 10px 14px; font-size: 13px; margin-bottom: 18px;
+  }
+  .hint-bar button { margin-left: auto; border: 0; background: var(--panel); padding: 6px 14px; border-radius: 8px; font-size: 12px; color: var(--accent); }
+
+  .demo-flag {
+    position: fixed; top: 10px; right: 12px; z-index: 70; font-size: 11px; color: var(--faint);
+    background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 3px 12px;
+  }
+  @media (max-width: 760px) {
+    .side { display: none; }
+    .photos { overflow-x: auto; }
+  }
+</style>
+</head>
+<body>
+<div class="demo-flag">设计方案 Demo · 数据为示例</div>
+
+<aside class="side">
+  <div class="brand">专注<em>.</em> 任务</div>
+  <nav class="nav">
+    <button><span>🗓️</span>我的计划</button>
+    <button><span>🎯</span>我的目标</button>
+    <button><span>🍅</span>番茄专注</button>
+    <button><span>📊</span>进度统计</button>
+    <button class="is-active"><span>📖</span>每日记录</button>
+  </nav>
+  <div class="side-foot">TODO DAY<br/>把每一天，如实留下。</div>
+</aside>
+
+<main>
+  <div class="topbar">
+    <div>
+      <div class="overline">JOURNAL / 每日记录</div>
+      <h1>每日记录</h1>
+    </div>
+    <div style="display:flex; gap:12px; align-items:center;">
+      <label class="search"><span>🔍</span><input id="q" type="search" placeholder="搜索这一天…" /></label>
+    </div>
+  </div>
+
+  <div class="datebar">
+    <button class="icon-btn" id="prevDay" title="前一天">‹</button>
+    <div class="day-title" id="dayTitle">–</div>
+    <button class="icon-btn" id="nextDay" title="后一天">›</button>
+    <button class="icon-btn" id="todayBtn" title="回到今天" style="width:auto; padding:0 12px; font-size:12px;">今天</button>
+  </div>
+
+  <div class="hint-bar" id="hintBar">
+    <span>💡</span><span>把随手拍、一句话、定位发给企业微信助手，AI 会替你整理到这条时间线上。</span>
+    <button onclick="document.getElementById('hintBar').remove()">知道了</button>
+  </div>
+
+  <section class="summary" id="summaryCard">
+    <div class="summary-head">
+      <span class="bot">🤖 今日摘要</span>
+      <span class="badge done" id="sumBadge">已整理</span>
+      <button class="regen" id="regenBtn"><span id="regenIcon">↻</span> 重新生成</button>
+    </div>
+    <p id="sumText">–</p>
+  </section>
+
+  <div class="timeline" id="timeline"></div>
+
+  <div class="filters" id="filters">
+    <button data-f="all" class="is-active">全部</button>
+    <button data-f="photo">照片</button>
+    <button data-f="place">地点</button>
+    <button data-f="text">文字</button>
+  </div>
+
+  <button class="add-backfill" id="backfillBtn">＋ 补记这一刻（不需要 AI，直接写入）</button>
+</main>
+
+<!-- 时刻详情抽屉 -->
+<div class="drawer-mask" id="mask"></div>
+<aside class="drawer" id="drawer">
+  <div style="display:flex; justify-content:space-between; align-items:center;">
+    <span class="badge" id="dBadge">已整理</span>
+    <button class="icon-btn" id="dClose" title="关闭 (Esc)">✕</button>
+  </div>
+  <div class="d-meta" id="dMeta" style="margin-top:10px;"></div>
+  <h3 id="dTitle" contenteditable="true" spellcheck="false"></h3>
+  <div class="d-content" id="dContent" contenteditable="true" spellcheck="false"></div>
+  <div class="photos" id="dPhotos"></div>
+  <div class="d-section">原始消息（不可改，整理稿可重新生成）</div>
+  <div class="raw-box" id="dRaw"></div>
+  <div class="d-actions">
+    <button class="btn primary" id="dSave">保存修改</button>
+    <button class="btn" id="dMerge">并入上一时刻</button>
+    <button class="btn danger" id="dDelete">删除</button>
+  </div>
+</aside>
+
+<!-- 照片灯箱 -->
+<div class="lightbox" id="lightbox"><div class="ph" id="lightboxPh"></div></div>
+
+<!-- 全局 toast -->
+<div class="toast" id="toast"><span id="toastMsg"></span><button id="toastAction" style="display:none;"></button></div>
+
+<script>
+/* ── 示例数据（两天） ─────────────────────────────────────────── */
+const PHOTO_STYLES = [
+  "linear-gradient(135deg,#f7b733,#fc4a1a)", "linear-gradient(135deg,#4ca1af,#c4e0e5)",
+  "linear-gradient(135deg,#11998e,#38ef7d)", "linear-gradient(135deg,#8e2de2,#4a00e0)",
+  "linear-gradient(135deg,#f2994a,#f2c94c)", "linear-gradient(135deg,#243949,#517fa4)",
+];
+const DAYS = {
+  "2026-10-19": {
+    weekday: "星期一",
+    summary: "早上被猫踩醒，上午在家写方案；中午临海面馆吃碳水，下午苏堤快走三公里，桂花全开了；晚上给爸妈打电话，聊到拆迁和老照片。",
+    moments: [
+      { id: "m1", time: "08:12", kind: "text", ai: "organized", title: "被猫踩醒的周一早晨",
+        content: "七点被猫踩醒，干脆起来写方案。咖啡两杯，上午把产品文档的骨架搭完了。",
+        raw: "【语音】早上七点被我们家猫踩醒 好吧那就起来吧 上午在家把那个产品文档的骨架给搭了一下 喝了两杯咖啡" },
+      { id: "m2", time: "12:40", kind: "photo", ai: "organized", title: "午饭：临海面馆",
+        content: "骑车十分钟到临海面馆，海鲜面加蛋。碳水救星，下午不困了。",
+        raw: "【照片】×3\n【文字】午饭 海鲜面加蛋 骑车过来的 十分钟",
+        photos: [{ s: 0, cap: "海鲜面" }, { s: 1, cap: "店面" }, { s: 5, cap: "路口" }] },
+      { id: "m3", time: "15:05", kind: "place", ai: "organized", title: "西湖 · 苏堤快走",
+        content: "苏堤快走三公里，人多但桂花开得正好。顺路买了杯龙井拿铁。",
+        raw: "【定位】西湖风景名胜区-苏堤\n【文字】快走三公里 桂花全开了 人好多",
+        place: "西湖 · 苏堤" },
+      { id: "m4", time: "21:47", kind: "text", ai: "raw", title: "给爸妈打电话",
+        content: "", raw: "晚上给爸妈打电话 聊了四十分钟 说到老家拆迁的事 还有以前的照片 回头整理一下发我" },
+    ],
+  },
+  "2026-10-18": {
+    weekday: "星期日",
+    summary: "大扫除半天，扔了三袋东西；下午去图书馆借了四本小说，晚上做了咖喱。",
+    moments: [
+      { id: "m5", time: "10:20", kind: "text", ai: "organized", title: "半年一度的大扫除",
+        content: "从书房开始，扔了三袋过期资料和坏数据线。桌面现在空得能滑冰。",
+        raw: "【文字】大扫除 从书房开始 扔了三袋东西 好多过期的资料和坏掉的数据线" },
+      { id: "m6", time: "14:32", kind: "photo", ai: "organized", title: "图书馆借书",
+        content: "在图书馆泡了两小时，借了四本小说，够看到年底。",
+        raw: "【照片】×2\n【文字】借了三本小说 不对 四本",
+        photos: [{ s: 3, cap: "借书堆" }, { s: 2, cap: "图书馆" }] },
+      { id: "m7", time: "19:05", kind: "text", ai: "organized", title: "咖喱首秀",
+        content: "按收藏的菜谱做了咖喱，土豆切太大块，下次改进。",
+        raw: "【照片】×1\n【文字】晚上做咖喱 土豆切太大了 下次切小点" },
+    ],
+  },
+};
+const KIND_ICON = { text: "💬", photo: "📷", place: "📍", mixed: "🧩" };
+const AI_BADGE = {
+  organized: ['<span class="badge done">已整理</span>', "已整理"],
+  raw: ['<span class="badge wait">待整理</span>', "待整理"],
+};
+
+/* ── 状态 ── */
+const state = { day: "2026-10-19", filter: "all", q: "", deleted: null };
+
+const $ = (id) => document.getElementById(id);
+const dayData = () => DAYS[state.day];
+const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+function photoDiv(p, big) {
+  return `<div class="photo" data-s="${p.s}" style="background:${PHOTO_STYLES[p.s % PHOTO_STYLES.length]}">
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 8h3l2-3h6l2 3h3v11H4Z"/><circle cx="12" cy="13" r="3.2"/></svg>
+    <small>${esc(p.cap || "")}</small></div>`;
+}
+
+function render() {
+  const d = dayData();
+  $("dayTitle").textContent = `${state.day.slice(0,4)}年${state.day.slice(5,7)}月${state.day.slice(8,10)}日 ${d.weekday}`;
+  $("sumText").textContent = d.summary;
+
+  let list = d.moments.filter((m) => state.filter === "all" || m.kind === state.filter);
+  if (state.q) {
+    const q = state.q.toLowerCase();
+    list = list.filter((m) => (m.title + m.content + (m.place || "") + m.raw).toLowerCase().includes(q));
+  }
+
+  $("timeline").innerHTML = list.length ? list.map((m) => {
+    const [badgeHtml] = AI_BADGE[m.ai] || AI_BADGE.raw;
+    const body = m.content
+      ? `<div class="moment-body">${esc(m.content)}
+           <br/><button class="raw-toggle" data-raw="${m.id}">查看原文 ↓</button>
+           <div class="raw-box" id="raw-${m.id}" style="display:none">${esc(m.raw)}</div>
+         </div>`
+      : `<div class="moment-body"><span style="color:var(--warn)">AI 暂不可用，以下为原文。</span>
+           <div class="raw-box">${esc(m.raw)}</div>
+         </div>`;
+    const photos = m.photos ? `<div class="photos">${m.photos.map(photoDiv).join("")}</div>` : "";
+    const place = m.place ? `<span class="place-chip">📍 ${esc(m.place)}</span>` : "";
+    return `<div class="moment ${m.ai === "raw" ? "is-wait" : ""}" data-id="${m.id}">
+      <div class="moment-card" data-open="${m.id}">
+        <div class="moment-head">
+          <span class="moment-time">${m.time}</span>
+          <span class="moment-kind">${KIND_ICON[m.kind]}</span>
+          <span class="moment-title">${esc(m.title)}</span>${badgeHtml}
+        </div>
+        ${body}${photos}${place}
+      </div>
+    </div>`;
+  }).join("") : `<div class="empty">这一天还没有记录。<br/>把随手拍和一句话发给企业微信助手，我会替你整理到这里。</div>`;
+}
+
+/* ── 交互：日期 / 过滤 / 搜索 ── */
+function shiftDay(n) {
+  const dt = new Date(state.day + "T00:00:00");
+  dt.setDate(dt.getDate() + n);
+  state.day = dt.toISOString().slice(0, 10);
+  if (!DAYS[state.day]) { // demo 只有两天数据，其余天数为空
+    DAYS[state.day] = { weekday: "周" + "日一二三四五六"[dt.getDay()], summary: "", moments: [] };
+  }
+  render();
+}
+$("prevDay").onclick = () => shiftDay(-1);
+$("nextDay").onclick = () => shiftDay(1);
+$("todayBtn").onclick = () => { state.day = "2026-10-19"; render(); };
+$("filters").onclick = (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  state.filter = b.dataset.f;
+  document.querySelectorAll("#filters button").forEach((x) => x.classList.toggle("is-active", x === b));
+  render();
+};
+$("q").oninput = (e) => { state.q = e.target.value.trim(); render(); };
+
+/* ── 摘要重新生成（演示异步态） ── */
+$("regenBtn").onclick = () => {
+  $("regenIcon").classList.add("spin");
+  $("sumBadge").textContent = "整理中"; $("sumBadge").className = "badge wait";
+  setTimeout(() => {
+    $("regenIcon").classList.remove("spin");
+    $("sumBadge").textContent = "已整理"; $("sumBadge").className = "badge done";
+    toast("摘要已重新生成（示例：原始消息未改动）");
+  }, 900);
+};
+
+/* ── 时刻详情抽屉 ── */
+let openId = null;
+function openDrawer(id) {
+  const m = dayData().moments.find((x) => x.id === id); if (!m) return;
+  openId = id;
+  $("dBadge").outerHTML = (AI_BADGE[m.ai] || AI_BADGE.raw)[0].replace('class="badge', 'id="dBadge" class="badge');
+  $("dMeta").innerHTML = `<span>${state.day} ${m.time}</span><span>${KIND_ICON[m.kind]}</span>` +
+    (m.place ? `<span>📍 ${esc(m.place)}</span>` : "");
+  $("dTitle").textContent = m.title;
+  $("dContent").textContent = m.content || m.raw;
+  $("dRaw").textContent = m.raw;
+  $("dPhotos").innerHTML = (m.photos || []).map(photoDiv).join("");
+  $("mask").classList.add("open"); $("drawer").classList.add("open");
+}
+function closeDrawer() { openId = null; $("mask").classList.remove("open"); $("drawer").classList.remove("open"); }
+$("mask").onclick = closeDrawer;
+$("dClose").onclick = closeDrawer;
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closeDrawer(); closeLightbox(); } });
+
+$("timeline").onclick = (e) => {
+  const rawBtn = e.target.closest("[data-raw]");
+  if (rawBtn) {
+    const box = $("raw-" + rawBtn.dataset.raw);
+    box.style.display = box.style.display === "none" ? "block" : "none";
+    rawBtn.textContent = box.style.display === "none" ? "查看原文 ↓" : "收起原文 ↑";
+    return;
+  }
+  const photo = e.target.closest(".photo");
+  if (photo) { openLightbox(+photo.dataset.s); return; }
+  const card = e.target.closest("[data-open]");
+  if (card) openDrawer(card.dataset.open);
+};
+
+/* ── 抽屉操作：保存 / 合并 / 删除撤销 ── */
+$("dSave").onclick = () => {
+  const m = dayData().moments.find((x) => x.id === openId); if (!m) return;
+  m.title = $("dTitle").textContent.trim() || m.title;
+  m.content = $("dContent").textContent.trim();
+  if (m.ai === "raw") { m.ai = "organized"; m.content = m.content || m.raw; }
+  toast("已保存修改"); closeDrawer(); render();
+};
+$("dMerge").onclick = () => {
+  const list = dayData().moments;
+  const i = list.findIndex((x) => x.id === openId);
+  if (i <= 0) { toast("没有可并入的上一时刻"); return; }
+  const cur = list[i], prev = list[i - 1];
+  prev.content += "\n" + (cur.content || cur.raw);
+  prev.raw += "\n" + cur.raw;
+  prev.photos = [...(prev.photos || []), ...(cur.photos || [])];
+  list.splice(i, 1);
+  toast("已并入上一时刻"); closeDrawer(); render();
+};
+$("dDelete").onclick = () => {
+  const list = dayData().moments;
+  const i = list.findIndex((x) => x.id === openId);
+  if (i < 0) return;
+  state.deleted = list.splice(i, 1)[0];
+  toast("时刻已删除", "撤销", () => { list.splice(i, 0, state.deleted); render(); });
+  closeDrawer(); render();
+};
+
+/* ── 灯箱 / toast / 补记 ── */
+function openLightbox(s) {
+  $("lightboxPh").style.background = PHOTO_STYLES[s % PHOTO_STYLES.length];
+  $("lightbox").classList.add("open");
+}
+function closeLightbox() { $("lightbox").classList.remove("open"); }
+$("lightbox").onclick = closeLightbox;
+
+let toastTimer = 0;
+function toast(msg, actionLabel, actionFn) {
+  $("toastMsg").textContent = msg;
+  const btn = $("toastAction");
+  if (actionLabel) { btn.style.display = ""; btn.textContent = actionLabel; btn.onclick = () => { hideToast(); actionFn && actionFn(); }; }
+  else { btn.style.display = "none"; }
+  $("toast").classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(hideToast, 4200);
+}
+function hideToast() { $("toast").classList.remove("show"); }
+
+$("backfillBtn").onclick = () => {
+  const now = new Date();
+  const hh = String(now.getHours()).padStart(2, "0"), mm = String(now.getMinutes()).padStart(2, "0");
+  const text = prompt("补记这一刻（直接写入，不走 AI）：");
+  if (!text || !text.trim()) return;
+  const d = dayData();
+  d.moments.push({ id: "m" + Date.now(), time: `${hh}:${mm}`, kind: "text", ai: "raw",
+    title: text.trim().slice(0, 16), content: "", raw: text.trim() });
+  d.moments.sort((a, b) => a.time.localeCompare(b.time));
+  toast("已补记（待整理状态，可手动编辑）");
+  render();
+};
+
+render();
+</script>
+</body>
+</html>
