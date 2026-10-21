@@ -149,7 +149,9 @@ test("detaching a milestone offers an undo toast", () => {
    超宽截断）；徽章只用中性色，不占用日历的分类色编码。 */
 test("task rows show a goal badge across plan, calendar and focus", () => {
   assert.match(store, /export function goalOfTask\(taskId: string\)/);
-  for (const src of [list, calendar, focus]) {
+  // 专注页的任务行在 FocusTaskRow 组件里（列表/四象限视图共用）。
+  const focusRow = readFileSync(new URL("../src/components/FocusTaskRow.vue", import.meta.url), "utf8");
+  for (const src of [list, calendar, focusRow]) {
     assert.match(src, /class="goal-badge"/);
     assert.match(src, /<Icon name="target" :size="10" \/>/);
     assert.match(src, /goal-badge-label/);

@@ -216,6 +216,9 @@ export async function initSession() {
     st.workspace = me.workspaces[0] || null;
     st.authed = true;
     await loadTasks();
+    /* 目标数据随会话一起拉：清单/日历/专注页的「目标徽章」都读
+       st.goals，以前只有进过目标页才有数据，徽章会先缺后现。 */
+    await loadGoals();
     offerLegacyImport();
   } catch (e) {
     st.authed = false;
@@ -244,6 +247,7 @@ async function afterAuth() {
   st.authed = true;
   st.statsLoaded = false;
   await loadTasks();
+  await loadGoals();
   offerLegacyImport();
 }
 

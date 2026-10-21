@@ -25,6 +25,7 @@ func main() {
 	addr := flag.String("addr", env("TODO_ADDR", ":8080"), "HTTP listen address")
 	dbPath := flag.String("db", env("TODO_DB", "tododay.db"), "SQLite database file path")
 	staticDir := flag.String("static", env("TODO_STATIC", ""), "directory with the built Vue frontend (optional)")
+	skillsDir := flag.String("skills", env("TODO_SKILLS", "../skills"), "directory with AI skill definitions (optional)")
 	genKey := flag.Bool("gen-config-key", false, "生成一把新的 TODO_CONFIG_KEY 后退出（不启动服务）")
 	flag.Parse()
 
@@ -60,6 +61,11 @@ func main() {
 	}
 
 	srv := api.NewServer(st, *staticDir)
+
+	// AI 技能定义从文件目录加载；目录缺失只降级该能力，不阻止启动。
+	if err := srv.LoadSkills(*skillsDir); err != nil {
+		log.Printf("提示：AI 技能加载失败（%v），技能调用将不可用", err)
+	}
 
 	// 恢复所有「已启用」工作区的助手连接；进程退出时统一断开。
 	srv.SyncAssistants(context.Background())

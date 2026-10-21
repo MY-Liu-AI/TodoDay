@@ -6,6 +6,8 @@
 
 这是已接入真实后端的完整应用：frontend/ 为 Vue 3 + Vite + TypeScript（页面与原版一致），backend/ 为 Go 1.26 服务端（net/http + 嵌入式 SQLite，WAL）。任务持久化在服务端数据库（users/sessions/workspaces/workspace_members/task_groups/tasks/task_events），支持注册登录、多工作区、乐观并发（version + 409）、幂等创建（client_id）、软删与撤销恢复、服务端排序事务；热力/连续天数/近 7 天统计同源（task_events 按工作区时区聚合）。前端不再有样本注入；localStorage 仅保留排序偏好、主题和「用户明确同意后才执行」的 legacy 导入流程（含 `todo-day-imported` 标记）。不得把前端操作成功当作对象存储或云同步成功——对象存储/上传能力尚未接入，见 FULLSTACK.md 与 DELIVERY.md。
 
+另有 AI 技能体系（2026-10-20）：技能定义在仓库根 `skills/`（`<name>/skill.json` + `prompt.md`），服务端以 `-skills` / `TODO_SKILLS` 加载进注册表（`backend/internal/ai/`），网页经 `POST /api/workspaces/{wid}/ai/invoke` 调用。首个技能 `quadrant`（番茄专注四象限，IU/IN/NU/NN）已上线：结果是一次性建议、不落库不改任务，未配置模型或失败时如实提示。技能注册表是唯一事实来源——适配器不得按技能名写分支；技能无状态、互不调用；持久化 AI 产出必须带 schema 版本。凭据解析沿用助手规则（配置行优先、fail-closed、绝不进前端）。
+
 另有可选的 `assistant/`：把企业微信智能机器人里说的计划记进本应用。它走 WebSocket 长连接（BotID + Secret），消息是明文 JSON，**不需要公网地址也不需要加解密**；解析用 Kimi（Moonshot），未配置或调用失败时如实告知，不退回关键词规则。它有两条路：**（推荐）后端内嵌运行**——连接+解析逻辑已并入 backend（`backend/internal/aibot` / `parse` / `assistant`），作为 per-workspace 后台 goroutine 跑，网页「设置」页点「测试连接」「启动助手/停止助手」即可启停，后端重启后按开关自动恢复；或**（进阶）独立进程** `assistant/`，通过 HTTP 调用 backend 的公开 API 写入任务、不直连数据库，需要自己的凭据与常驻进程，键名见 `assistant/.env.example` 与 `assistant/README.md`。同一机器人只支持一条长连接，两种跑法（或两个后端实例）同时开会互相踢。
 
 ## 下游 agent 必须遵守
