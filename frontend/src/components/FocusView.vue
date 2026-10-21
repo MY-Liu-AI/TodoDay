@@ -1,18 +1,17 @@
 <script setup lang="ts">
 /* 番茄专注页：左边挑今天的事 + 25 分钟倒计时；右边今日/本周/本月读数、
    近 4 周每日柱图、今天的专注记录。所有统计读自服务端。 */
-import { computed, onMounted } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { C } from "../copy";
 import { DAY, TODAY, midnight } from "../lib/todo.js";
 import { dateValue } from "../lib/model.js";
-import { groupColor } from "../lib/palette.js";
 import { sound, haptic } from "../lib/fx";
-import { st, toggleTask, goalOfTask } from "../store";
+import { st } from "../store";
+import { invokeSkill } from "../api";
 import type { Item } from "../store";
 import {
   fs,
   POMODORO_SEC,
-  pick,
   start,
   pause,
   abandon,
@@ -26,14 +25,62 @@ import {
   fmtClock,
 } from "../focus";
 import Icon from "./Icon.vue";
+import FocusTaskRow from "./FocusTaskRow.vue";
 
-/* 今天要处理的事：今天截止 + 逾期未完成（逾期也该今天处理），未完成在前。 */
-const todayTasks = computed(() =>
+/* 今天要处理的事 = 今天计划的（含已完成）+ 今天之前未完成的（逾期）。
+   排序：逾期未完成最前，其次今天未完成（按优先级），已完成垫底。 */
+function bucket(i: Item): number {
+  if (i.done) return 2;
+  return midnight(i.due!) < TODAY ? 0 : 1;
+}
+const baseTasks = computed(() =>
   st.items
-    .filter((i) => i.due && midnight(i.due) <= TODAY)
-    .sort((a, b) => Number(a.done) - Number(b.done) || a.p - b.p),
+    .filter((i) => i.due && (midnight(i.due) === TODAY || (midnight(i.due) < TODAY && !i.done)))
+    .sort((a, b) => bucket(a) - bucket(b) || a.p - b.p),
 );
-const busy = computed(() => fs.phase === "running" || fs.phase === "paused");
+
+/* ── 手动排序（视图层，仅本次会话）──────────────────────────
+   与「我的目标」卡片同款交互：行尾悬停浮现上下小圆键，与相邻行交换。
+   只改本页展示顺序，不写服务端——任务的权威排序仍在清单页。 */
+const manualOrder = ref<string[]>([]);
+const todayTasks = computed(() => {
+  const base = baseTasks.value;
+  if (!manualOrder.value.length) return base;
+  const rank = new Map(manualOrder.value.map((id, idx) => [id, idx]));
+  return [...base].sort(
+    (a, b) => (rank.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.id) ?? Number.MAX_SAFE_INTEGER),
+  );
+});
+function moveTask(item: Item, dir: -1 | 1) {
+  const ids = todayTasks.value.map((t) => t.id);
+  const idx = ids.indexOf(item.id);
+  const j = idx + dir;
+  if (idx < 0 || j < 0 || j >= ids.length) return;
+  [ids[idx], ids[j]] = [ids[j], ids[idx]];
+  manualOrder.value = ids;
+}
+
+/* ── AI 四象限标签 ──────────────────────────────────────────
+   点「AI 划分」调用服务端 quadrant 技能：服务端按同一口径取今日任务、
+   模型分类、服务端校验（id 必须在任务集合内）。产出是一次性建议，
+   不落库、不改任务。结果（含每项的归类理由）存在 quadrant 模块里，
+   跨页面切换保留到刷新。 */
+import { quadItems, quadLoading, quadError, applyQuadResult } from "../quadrant";
+
+async function runQuadrant() {
+  if (quadLoading.value || !todayTasks.value.length) return;
+  quadLoading.value = true;
+  quadError.value = "";
+  try {
+    const out = await invokeSkill(st.workspace!.id, "quadrant");
+    applyQuadResult(out.result.items);
+  } catch (e) {
+    // 如实呈现失败（未配置/配额/模型错误），不编造一份假划分。
+    quadError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    quadLoading.value = false;
+  }
+}
 const progress = computed(() => 1 - fs.remaining / POMODORO_SEC);
 const R = 88;
 const CIRC = 2 * Math.PI * R;
@@ -106,19 +153,6 @@ function onAgain() {
 function fmtTime(ms: number) {
   return new Date(ms).toLocaleTimeString(C.locale, { hour: "2-digit", minute: "2-digit" });
 }
-function choose(task: Item | null) {
-  if (busy.value) return;
-  pick(task);
-  sound.tick();
-}
-
-/* 今天的事可以直接在这里勾掉：专注完顺手标记完成，不用切回清单。 */
-function markDone(i: Item) {
-  if (busy.value && fs.task?.id === i.id) return;
-  toggleTask(i);
-  i.done ? sound.tick() : sound.ding();
-  haptic(14);
-}
 
 onMounted(() => loadStats());
 </script>
@@ -187,45 +221,29 @@ onMounted(() => loadStats());
         <div class="overview-heading">
           <h2>{{ C.focusTodayList }}</h2>
           <span>{{ todayTasks.length }} {{ C.tasks }}</span>
+          <button
+            class="text-button focus-quad-toggle"
+            :disabled="quadLoading || !todayTasks.length"
+            @click="runQuadrant"
+          >
+            {{ quadLoading ? C.focusQuadrantRunning : C.focusQuadrantRun }}
+          </button>
         </div>
+        <p v-if="quadError" role="alert" class="storage-warning">
+          {{ C.focusQuadrantFailed }}：{{ quadError }}
+          <button class="text-button" @click="runQuadrant">{{ C.retry }}</button>
+        </p>
         <div v-if="!todayTasks.length" class="agenda-empty">{{ C.focusEmpty }}</div>
         <div v-else class="focus-task-list">
-          <div
-            v-for="i in todayTasks"
+          <FocusTaskRow
+            v-for="(i, idx) in todayTasks"
             :key="i.id"
-            class="focus-task"
-            :class="[fs.task?.id === i.id ? 'is-picked' : '', i.done ? 'is-done' : '']"
-            :data-color="groupColor(i.g)"
-          >
-            <button
-              class="task-check"
-              :class="i.done ? 'is-checked' : ''"
-              :aria-label="(i.done ? C.focusToggleReopen : C.focusToggleDone) + ' ' + i.t"
-              :aria-pressed="i.done"
-              @click="markDone(i)"
-            >
-              <Icon name="check" :size="14" />
-            </button>
-            <button
-              class="focus-task-pick"
-              :disabled="busy && fs.task?.id !== i.id"
-              :aria-pressed="fs.task?.id === i.id"
-              :aria-label="C.focusPick + ' ' + i.t"
-              @click="choose(fs.task?.id === i.id ? null : i)"
-            >
-              <span class="event-dot" />
-              <span class="focus-task-title">{{ i.t }}</span>
-              <span v-if="goalOfTask(i.id)" class="goal-badge" :title="goalOfTask(i.id)!.title">
-                <Icon name="target" :size="10" />
-                <span class="goal-badge-label">{{ goalOfTask(i.id)!.title }}</span>
-              </span>
-              <span class="task-group-label">{{ i.g }}</span>
-              <span class="focus-task-state">
-                <template v-if="fs.task?.id === i.id">{{ busy ? C.focusPicked : C.focusChange }}</template>
-                <template v-else>{{ C.focusPick }}</template>
-              </span>
-            </button>
-          </div>
+            :i="i"
+            :quad="quadItems[i.id] || null"
+            :can-up="idx > 0"
+            :can-down="idx < todayTasks.length - 1"
+            @move="(dir) => moveTask(i, dir)"
+          />
         </div>
       </div>
     </section>

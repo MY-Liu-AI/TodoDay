@@ -84,6 +84,17 @@
 - 测试：后端 `store/goals_test.go` 7 条（建列/挂载/一条任务一目标/跨区 NotFound/软删保留归属与任务撤销恢复/版本冲突/排序校验/目标重排/**跨工作区写操作零副作用**）、`api/goals_test.go` 3 条（全生命周期含 409 与目标重排、校验、跨工作区 403）；前端 `goals.test.mjs` 11 条契约（App 接线、store 动作与端点、卡片左移/右移排序、进度推导与串行锁定、安排弹层、当前步高亮、移出撤销、三页目标徽章、完成进度回执、今日建议、文案键）。`focus.test.mjs` 的页面并集断言同步更新。
 - **未实现**：目标内任务拖拽排序 UI（API 已就绪）；任务权重（列已预留，恒为 1）；进度历史曲线图（P2）；任务弹窗里没有目标字段（挂载只在目标页操作）。
 
+**AI 技能体系 + 番茄专注四象限（2026-10-20 增量）**
+- 架构（`backend/internal/ai/`，三层）：能力层 `chat.go`（共享 OpenAI 兼容传输，SSRF 加固——owner 可配的 base URL **不跟随重定向**，Bearer 凭据不外泄；Kimi 系不支持 temperature 参数故不传）、`invoke.go`（调用器：按注册表声明的 context provider **在服务端**组装数据 → 调 LLM → 按 output validator 校验并丢弃幻觉/非法输出）；注册表 `registry.go`（`-skills` 目录加载 `<name>/skill.json` + `prompt.md`，目录缺失=空注册表，单个坏技能=整个加载失败不半加载；**注册表是唯一事实来源，适配器不做技能名 if/else**）；接入适配器 `backend/internal/api/ai.go`（按 `entries` 声明分发入口）。技能无状态、互不调用。
+- 凭据：`resolveLLM` 与助手同规则——配置行有 KimiAPIKeyEnc → secretbox 解密（fail-closed，box 缺失报错）；配置行存在但密钥已撤销（空密文）→ **不回落环境变量**；无配置行 → 环境变量兜底（`KIMI_API_KEY`→`MOONSHOT_API_KEY`，`KIMI_BASE_URL` 默认 `https://api.moonshot.cn/v1`，`ASSISTANT_MODEL` 默认 `moonshot-v1-8k`）；都没有 → 409 `ai_not_configured`。
+- 配额：每工作区每日 60 次（429 `ai_quota_exceeded`）；其余失败 502 `ai_invoke_failed`，前端如实提示「AI 分析失败」，**绝不编造假结果**。
+- 首个技能 `skills/quadrant`（version 0.1.0，entries=["web"]，permission="read"，context="today_tasks"，output="quadrant_result"）：prompt 定义 IU/IN/NU/NN 判定规则（逾期默认 IU、尊重用户优先级、已完成任务如实分类）；服务端 provider 按与前端同一口径取今日任务（今天截止含已完成 + 之前逾期未完成，最多 500 条），validator 归一化象限写法、丢弃幻觉 id 与非法象限（计入 `dropped`）。
+- API：`POST /api/workspaces/{wid}/ai/invoke`（成员级，body `{skill}`，结果 `{skill,version,result}`）、`GET .../ai/skills`（列技能元数据，**不含 prompt**）、`POST .../ai/skills/reload`（owner 热加载）。
+- 前端：番茄专注页「今天要处理的事」标题旁「四象限」按钮 → `invokeSkill()`（35s 超时）；四格 + 「未分类」分区渲染（复用抽出的 `FocusTaskRow.vue`，reason 显示在任务行下方）；失败显示真实错误信息可重试；结果只在本次会话缓存，不落库、不改任务。
+- `parse/kimi.go`/`planner.go` 重构为复用 `ai.DoChat`/`DoChatLenient`（Verify 的响应可空 choices，用 Lenient 版本），解析语义不变。
+- 测试：后端 `ai/registry_test.go`（加载/重载/坏技能拒绝）、`ai/invoke_test.go`（validator 归一化与丢弃、provider 口径过滤）、`api/ai_test.go`（fake LLM 端到端 200 / unknown skill 502 / 缺技能 400 / 无凭据 409 / 列技能）；既有全部测试通过。前端 `focus.test.mjs` 契约更新（任务行抽组件后勾选逻辑随行迁移）。
+- **未实现**：AI 技能目前只有网页入口（`entries` 已预留 `chat`，企业微信对话入口尚未接技能）；仅支持 Kimi/Moonshot 模型；结果不落库（若未来持久化 AI 产出，必须带 schema 版本）。
+
 ## 环境变量与启动（名称，非密钥值）
 
 | 变量 | 默认 | 用途 |
@@ -93,6 +104,7 @@
 | `TODO_STATIC` | 空 | 前端构建产物目录；为空则不托管静态文件 |
 | `TODO_SECURE_COOKIES` | 未设置 | 置 `1` 时会话 Cookie 加 Secure（HTTPS 部署时） |
 | `TODO_CONFIG_KEY` | 未设置 | 助手凭据的加密主密钥（base64 的 32 字节）。缺失时服务照常启动，但设置页无法保存密钥。用 `go run ./cmd/server -gen-config-key` 生成。**丢失不可恢复**，须妥善保管 |
+| `TODO_SKILLS` | `../skills` | AI 技能定义目录（也可用 `-skills` 覆盖）；目录缺失时服务照常启动、技能调用不可用（启动日志有提示） |
 
 开发：`cd frontend && npm install && npm run dev`（Vite 将 /api 代理到 :8080）；另起 `cd backend && go run ./cmd/server`。
 生产单进程：`npm run build` 后 `go run ./cmd/server -static ../frontend/dist` 同源托管 SPA（非 /api 路径回退 index.html）。

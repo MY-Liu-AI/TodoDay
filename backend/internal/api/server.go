@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"tododay/internal/ai"
 	"tododay/internal/assistant"
 	"tododay/internal/secretbox"
 	"tododay/internal/store"
@@ -34,6 +35,8 @@ type Server struct {
 	box *secretbox.Box
 	// assistant 内嵌运行助手连接（per-workspace）。测试/启动/停止都走它。
 	assistant *assistant.Manager
+	// ai 是技能调用器：技能定义从文件目录加载（LoadSkills），不在代码里写死。
+	ai *ai.Invoker
 }
 
 func NewServer(st *store.Store, staticDir string) *Server {
@@ -51,9 +54,22 @@ func NewServer(st *store.Store, staticDir string) *Server {
 		mux:        http.NewServeMux(),
 		box:        box,
 		assistant:  assistant.NewManager(st, box),
+		ai:         ai.NewInvoker(st, box),
 	}
 	s.routes()
 	return s
+}
+
+// LoadSkills 从 dir 加载 AI 技能定义（每个子目录一个技能）。
+// 目录缺失不阻止启动：技能系统降级为「未启用」，调用如实报错。
+func (s *Server) LoadSkills(dir string) error {
+	reg, err := ai.LoadRegistry(dir)
+	if err != nil {
+		return err
+	}
+	s.ai.SetRegistry(reg)
+	log.Printf("ai: 已加载 %d 个技能（目录 %s）", len(reg.List()), dir)
+	return nil
 }
 
 // SyncAssistants 在进程启动后恢复所有「已启用」工作区的助手连接。
@@ -107,6 +123,12 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/workspaces/{wid}/assistant/test-llm", s.withAuth(s.withWorkspaceOwner(s.testAssistantLlm)))
 	s.mux.HandleFunc("POST /api/workspaces/{wid}/assistant/start", s.withAuth(s.withWorkspaceOwner(s.startAssistant)))
 	s.mux.HandleFunc("POST /api/workspaces/{wid}/assistant/stop", s.withAuth(s.withWorkspaceOwner(s.stopAssistant)))
+
+	// AI 技能：Web 端按名调用（成员可用，每工作区每日有配额）；
+	// 技能列表成员可看，热重载仅 owner（技能是文件，改完 reload 即生效）。
+	s.mux.HandleFunc("POST /api/workspaces/{wid}/ai/invoke", s.withAuth(s.withWorkspace(s.invokeSkill)))
+	s.mux.HandleFunc("GET /api/workspaces/{wid}/ai/skills", s.withAuth(s.withWorkspace(s.listSkills)))
+	s.mux.HandleFunc("POST /api/workspaces/{wid}/ai/skills/reload", s.withAuth(s.withWorkspaceOwner(s.reloadSkills)))
 }
 
 // Handler wraps the mux with security and panic-recovery middleware.

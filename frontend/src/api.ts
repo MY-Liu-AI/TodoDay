@@ -100,3 +100,29 @@ export async function api<T = any>(
   }
   return data as T;
 }
+
+/* ── AI 技能调用 ─────────────────────────────────────────────── */
+
+/* 技能产出里的单条结果（以 quadrant 技能为例，各技能的 result 形状
+   由服务端校验后下发，前端按技能约定的结构读取）。 */
+export interface WireQuadrantItem {
+  id: string;
+  quadrant: "IU" | "IN" | "NU" | "NN";
+  reason: string;
+}
+
+export interface WireSkillResult {
+  skill: string;
+  version: string;
+  result: { items: WireQuadrantItem[]; dropped: number };
+}
+
+/* 按名调用服务端技能注册表里的技能。推理模型生成要十几秒到一两分钟，
+   超时给足（服务端写超时 120s）。 */
+export function invokeSkill(wid: number, skill: string): Promise<WireSkillResult> {
+  return api<WireSkillResult>(`/api/workspaces/${wid}/ai/invoke`, {
+    method: "POST",
+    body: { skill },
+    timeoutMs: 125_000,
+  });
+}

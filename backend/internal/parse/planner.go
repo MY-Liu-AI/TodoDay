@@ -1,13 +1,13 @@
 package parse
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
+
+	"tododay/internal/ai"
 )
 
 // Message 是一条多轮对话消息，供上层拼历史。
@@ -130,48 +130,21 @@ func (k *Kimi) Plan(ctx context.Context, history []Message, now time.Time, loc *
 		system += "\n工作区现有分组：" + strings.Join(groups, "、") + "。"
 	}
 
-	messages := make([]chatMessage, 0, len(history)+1)
-	messages = append(messages, chatMessage{Role: "system", Content: system})
+	messages := make([]ai.ChatMessage, 0, len(history)+1)
+	messages = append(messages, ai.ChatMessage{Role: "system", Content: system})
 	for _, m := range history {
-		messages = append(messages, chatMessage{Role: m.Role, Content: m.Content})
+		messages = append(messages, ai.ChatMessage{Role: m.Role, Content: m.Content})
 	}
 
-	payload := chatRequest{
+	payload := ai.ChatRequest{
 		Model:      k.Model,
 		Messages:   messages,
 		Tools:      []map[string]any{recordPlansSchema, askUserSchema},
 		ToolChoice: "auto",
 	}
-	raw, err := json.Marshal(payload)
+	out, err := ai.DoChat(ctx, k.HTTP, k.base, k.APIKey, &payload)
 	if err != nil {
 		return Decision{}, err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, k.base+"/chat/completions", bytes.NewReader(raw))
-	if err != nil {
-		return Decision{}, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+k.APIKey)
-
-	resp, err := k.HTTP.Do(req)
-	if err != nil {
-		return Decision{}, fmt.Errorf("调用 Kimi 失败：%w", err)
-	}
-	defer resp.Body.Close()
-
-	var out chatResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return Decision{}, fmt.Errorf("Kimi 响应不是合法 JSON：%w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		if out.Error != nil {
-			return Decision{}, fmt.Errorf("Kimi 返回 %d：%s", resp.StatusCode, out.Error.Message)
-		}
-		return Decision{}, fmt.Errorf("Kimi 返回 %d", resp.StatusCode)
-	}
-	if len(out.Choices) == 0 {
-		return Decision{}, fmt.Errorf("Kimi 没有返回任何结果")
 	}
 
 	var write Decision

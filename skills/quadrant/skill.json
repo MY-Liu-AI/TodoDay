@@ -1,0 +1,10 @@
+{
+  "name": "quadrant",
+  "version": "0.1.1",
+  "description": "将今天要处理的事按重要/紧急四象限划分，每项都必须给出划分理由",
+  "kind": "llm",
+  "entries": ["web"],
+  "permission": "read",
+  "context": "today_tasks",
+  "output": "quadrant_result"
+}

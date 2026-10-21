@@ -91,9 +91,13 @@ test("the bell fires from the module, not the page, so it rings on other pages",
 });
 
 test("today's tasks can be completed from the focus page", () => {
-  assert.match(view, /import \{ st, toggleTask, goalOfTask \} from "\.\.\/store"/);
-  assert.match(view, /function markDone/);
-  assert.match(view, /@click="markDone\(i\)"/);
+  // 任务行抽成了 FocusTaskRow（列表/四象限两种视图共用），勾选逻辑随行迁移。
+  const row = readFileSync(new URL("../src/components/FocusTaskRow.vue", import.meta.url), "utf8");
+  assert.match(view, /import FocusTaskRow from "\.\/FocusTaskRow\.vue"/);
+  assert.match(view, /<FocusTaskRow/);
+  assert.match(row, /import \{[^}]*toggleTask[^}]*\} from "\.\.\/store"/);
+  assert.match(row, /function onMarkDone/);
+  assert.match(row, /@click="onMarkDone\(i\)"/);
   // 勾选是独立控件，不能把按钮套在按钮里。
-  assert.match(view, /class="task-check"/);
+  assert.match(row, /class="task-check"/);
 });

@@ -1315,7 +1315,19 @@ button:disabled {
   margin: 0;
 }
 .focus-picker {
-  margin-top: 32px;
+  margin-top: 24px;
+  /* 与 .focus-timer 同款的卡片容器：标题 + 列表收拢成一个整体，
+     不再是一块悬空的标题加一列裸行。 */
+  padding: 18px 20px 20px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+}
+.focus-picker .overview-heading {
+  margin-bottom: 12px;
+}
+.focus-picker .overview-heading h2 {
+  font-size: 14px;
 }
 .focus-task-list {
   display: grid;
@@ -1324,6 +1336,7 @@ button:disabled {
 .focus-task {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
   padding: 8px 12px;
   min-height: 44px;
@@ -1340,18 +1353,18 @@ button:disabled {
   background: var(--accent-soft);
   border-color: var(--accent);
 }
+/* 「选择专注」保持原来的纯文字形态：无边框无底色，悬停变青绿。 */
 .focus-task-pick {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex: 1;
-  min-width: 0;
+  flex: none;
   padding: 2px 0;
   border: 0;
   background: none;
-  color: var(--ink);
-  text-align: left;
-  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.16s var(--ease);
+}
+.focus-task-pick:hover:not(:disabled) {
+  color: var(--accent);
 }
 .focus-task-pick:disabled {
   opacity: 0.45;
@@ -1378,6 +1391,120 @@ button:disabled {
 .focus-task .task-group-label {
   font-size: 11px;
   flex: none;
+}
+/* 「AI 划分」：圆角小药丸按钮，悬停/运行态见下。 */
+.focus-quad-toggle {
+  margin-left: auto;
+  min-height: 28px;
+  padding: 3px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.focus-quad-toggle:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.focus-quad-toggle:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+/* 标题区：有理由时是展开按钮，否则是普通区块。 */
+.focus-task-expand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  text-align: left;
+  font-size: 13px;
+}
+button.focus-task-expand {
+  cursor: pointer;
+}
+/* 展开后的 AI 理由：独占一行显示在任务下方。 */
+.focus-quad-reason {
+  flex-basis: 100%;
+  margin: 2px 0 0;
+  padding: 6px 10px 6px 34px;
+  border-left: 2px solid var(--line);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.focus-quad-reason-tag {
+  display: inline-block;
+  margin-right: 6px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.focus-quad-reason-tag[data-q="IU"] {
+  color: var(--neg);
+}
+.focus-quad-reason-tag[data-q="IN"] {
+  color: var(--accent);
+}
+.focus-quad-reason-tag[data-q="NU"] {
+  color: #b98a2e;
+}
+.focus-quad-reason-tag[data-q="NN"] {
+  color: var(--muted);
+}
+/* 行尾上下移动键：与「我的目标」卡片同款——22px 圆形描边小键，
+   悬停/键盘聚焦行时浮现。只调视图顺序，故不放行首、不抢视觉。 */
+.focus-task-move {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: none;
+  opacity: 0;
+  transition: opacity 0.16s var(--ease);
+}
+.focus-task:hover .focus-task-move,
+.focus-task:focus-within .focus-task-move {
+  opacity: 1;
+}
+.focus-move-btn {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    color 0.16s var(--ease),
+    border-color 0.16s var(--ease);
+}
+.focus-move-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.focus-move-btn .rot-up {
+  transform: rotate(-90deg);
+}
+.focus-move-btn .rot-down {
+  transform: rotate(90deg);
+}
+.focus-task-late {
+  flex: none;
+  font-size: 11px;
+  white-space: nowrap;
+  color: var(--neg);
+  background: color-mix(in srgb, var(--neg) 12%, transparent);
+  border-radius: 6px;
+  padding: 1px 6px;
 }
 .focus-task-state {
   flex: none;

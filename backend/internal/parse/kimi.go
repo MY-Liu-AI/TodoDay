@@ -1,13 +1,14 @@
 package parse
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
+
+	"tododay/internal/ai"
 )
 
 // apiBase 默认取 Moonshot（Kimi）的 OpenAI 兼容地址；测试时替换为 httptest 地址。
@@ -15,7 +16,8 @@ var apiBase = "https://api.moonshot.cn/v1"
 
 const toolName = "record_plan"
 
-// Kimi 是 Moonshot 的 Kimi 客户端。
+// Kimi 是 Moonshot 的 Kimi 客户端。协议传输（DoChat）在 ai 包，
+// 这里只保留解析语义：工具 schema、参数清洗与收敛。
 //
 // 走 OpenAI 兼容的 /chat/completions，用 function calling 拿结构化结果：
 // 模型必须按参数 schema 填，省掉一层「解析模型自由输出」的脆弱逻辑。
@@ -28,7 +30,9 @@ type Kimi struct {
 
 func NewKimi(apiKey, baseURL, model string, timeout time.Duration) *Kimi {
 	if model == "" {
-		model = "moonshot-v1-8k"
+		// Moonshot 新平台账号已没有 moonshot-v1-* 系列（404）；
+		// 与 ai.defaultModel 保持一致。
+		model = "kimi-k2.7-code-highspeed"
 	}
 	if baseURL == "" {
 		baseURL = apiBase
@@ -88,43 +92,6 @@ var toolSchema = map[string]any{
 	},
 }
 
-type chatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-type chatRequest struct {
-	Model      string           `json:"model"`
-	Messages   []chatMessage    `json:"messages"`
-	Tools      []map[string]any `json:"tools"`
-	ToolChoice string           `json:"tool_choice"`
-	// Temperature 故意不发：Moonshot 的 kimi-k2 系列只允许 temperature=1，
-	// 显式发 0.1 这类「抽取任务低温」会被 400 拒绝（invalid temperature）；
-	// 各模型的默认值由服务端自己保证合法，且 function calling 已强约束
-	// 输出结构，低温收益有限。
-	Temperature *float64 `json:"temperature,omitempty"`
-}
-
-type chatResponse struct {
-	Choices []struct {
-		FinishReason string `json:"finish_reason"`
-		Message      struct {
-			Content   string `json:"content"`
-			ToolCalls []struct {
-				Function struct {
-					Name string `json:"name"`
-					// OpenAI 兼容格式里，工具参数是 JSON 字符串而不是对象。
-					Arguments string `json:"arguments"`
-				} `json:"function"`
-			} `json:"tool_calls"`
-		} `json:"message"`
-	} `json:"choices"`
-	Error *struct {
-		Type    string `json:"type"`
-		Message string `json:"message"`
-	} `json:"error"`
-}
-
 type planInput struct {
 	Title    string `json:"title"`
 	Due      string `json:"due"`
@@ -141,45 +108,18 @@ func (k *Kimi) Parse(ctx context.Context, text string, now time.Time, loc *time.
 	today := dateValue(now, loc)
 	userText := fmt.Sprintf("今天的日期是 %s（时区 %s）。\n用户的计划：%s", today, loc.String(), text)
 
-	payload := chatRequest{
+	payload := ai.ChatRequest{
 		Model: k.Model,
-		Messages: []chatMessage{
+		Messages: []ai.ChatMessage{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: userText},
 		},
 		Tools:      []map[string]any{toolSchema},
 		ToolChoice: "auto",
 	}
-	raw, err := json.Marshal(payload)
+	out, err := ai.DoChat(ctx, k.HTTP, k.base, k.APIKey, &payload)
 	if err != nil {
 		return Plan{}, err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, k.base+"/chat/completions", bytes.NewReader(raw))
-	if err != nil {
-		return Plan{}, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+k.APIKey)
-
-	resp, err := k.HTTP.Do(req)
-	if err != nil {
-		return Plan{}, fmt.Errorf("调用 Kimi 失败：%w", err)
-	}
-	defer resp.Body.Close()
-
-	var out chatResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return Plan{}, fmt.Errorf("Kimi 响应不是合法 JSON：%w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		if out.Error != nil {
-			return Plan{}, fmt.Errorf("Kimi 返回 %d：%s", resp.StatusCode, out.Error.Message)
-		}
-		return Plan{}, fmt.Errorf("Kimi 返回 %d", resp.StatusCode)
-	}
-	if len(out.Choices) == 0 {
-		return Plan{}, fmt.Errorf("Kimi 没有返回任何结果")
 	}
 
 	for _, call := range out.Choices[0].Message.ToolCalls {
@@ -214,40 +154,14 @@ func (k *Kimi) Verify(ctx context.Context) error {
 	if k.APIKey == "" {
 		return fmt.Errorf("未配置 LLM API Key")
 	}
-	payload := map[string]any{
-		"model":    k.Model,
-		"messages": []map[string]string{{"role": "user", "content": "ping"}},
+	payload := ai.ChatRequest{
+		Model: k.Model,
+		Messages: []ai.ChatMessage{
+			{Role: "user", Content: "ping"},
+		},
 	}
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, k.base+"/chat/completions", bytes.NewReader(raw))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+k.APIKey)
-
-	resp, err := k.HTTP.Do(req)
-	if err != nil {
-		return fmt.Errorf("调用 LLM 失败：%w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		var out struct {
-			Error *struct {
-				Message string `json:"message"`
-			} `json:"error"`
-		}
-		_ = json.NewDecoder(resp.Body).Decode(&out)
-		if out.Error != nil {
-			return fmt.Errorf("LLM 返回 %d：%s", resp.StatusCode, out.Error.Message)
-		}
-		return fmt.Errorf("LLM 返回 %d", resp.StatusCode)
-	}
-	return nil
+	_, err := ai.DoChatLenient(ctx, k.HTTP, k.base, k.APIKey, &payload)
+	return err
 }
 
 // normalize 收敛字段到后端可接受的范围。防御性的：即便模型给出越界值，
