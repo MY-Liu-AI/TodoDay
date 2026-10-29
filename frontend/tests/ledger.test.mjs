@@ -4,20 +4,28 @@ import { readFileSync } from "node:fs";
 import {
   LEDGER_CATS,
   catColor,
+  catExpRank,
   fmtDayHead,
   fmtMoney,
   fmtMonthTitle,
   groupTxByDay,
+  momPct,
   monthKeyOf,
   monthTotals,
+  prevMonthKey,
+  spendByCategory,
 } from "../src/lib/ledger.js";
 
-/* 记账本契约（2026-10-26）：
-   - 简约版 demo 交互落地：月份切换 + 支出/收入/结余三卡 + 按天分组流水 +
-     底部记一笔 sheet（数字键盘、六色分类胶囊、Enter/Shift+Enter/N/Esc）；
+/* 记账本契约（2026-10-29）：
+   - 两个视图：账本总览（流水分析 + 流水）/ 分类预算，与目标页同一套
+     view-switch 分段切换；主操作随视图变化（记一笔 / 添加预算）；
+   - 流水分析 = 与上月对比（收支结余三卡 + 环比）+ 分类支出排行（占比条形），
+     全部由当月流水推导，恒与服务端同口径；上月汇总独立拉取、失败降级；
+   - 分类预算是长期月度预算（每分类一条，设置一次每月沿用），按当前展示月
+     考核；花费从当月流水推导，与三卡同口径；当月有支出无预算的分类
+     单列提示补预算；
    - 数据全在服务端（per-workspace），client_id 幂等、version 乐观并发、
-     软删 + 撤销；三卡由列表推导，恒与服务端同口径；
-   - 分类色是 [data-color] 数据编码，主操作只有青绿一色。 */
+     软删 + 撤销；分类色是 [data-color] 数据编码，主操作只有青绿一色。 */
 
 const store = readFileSync(new URL("../src/store.ts", import.meta.url), "utf8");
 const app = readFileSync(new URL("../src/App.vue", import.meta.url), "utf8");
@@ -83,6 +91,49 @@ test("monthTotals nets income minus expenses", () => {
   assert.deepEqual(monthTotals([]), { exp: 0, inc: 0, net: 0 });
 });
 
+test("prevMonthKey walks across year boundary", () => {
+  assert.equal(prevMonthKey("2026-10"), "2026-09");
+  assert.equal(prevMonthKey("2026-01"), "2025-12");
+  assert.equal(prevMonthKey("2026-12"), "2026-11");
+});
+
+test("spendByCategory sums expenses only", () => {
+  const txs = [
+    { type: "exp", category: "餐饮", amountFen: 100 },
+    { type: "exp", category: "餐饮", amountFen: 200 },
+    { type: "exp", category: "购物", amountFen: 50 },
+    { type: "inc", category: "", amountFen: 999 },
+  ];
+  assert.deepEqual(spendByCategory(txs), { 餐饮: 300, 购物: 50 });
+});
+
+test("catExpRank sorts desc, computes pct of total, folds tail into 其他", () => {
+  const txs = [
+    { type: "exp", category: "餐饮", amountFen: 500 },
+    { type: "exp", category: "购物", amountFen: 300 },
+    { type: "exp", category: "娱乐", amountFen: 150 },
+    { type: "exp", category: "学习", amountFen: 50 },
+  ];
+  // topN=3：前 3 名照常展示，第 4 名折进「其他」。
+  const rank = catExpRank(txs, 3);
+  assert.deepEqual(
+    rank.map((r) => r.category),
+    ["餐饮", "购物", "娱乐", "其他"],
+  );
+  assert.equal(rank[0].pct, 50);
+  assert.equal(rank[3].amountFen, 50);
+  assert.deepEqual(catExpRank([], 3), []);
+  // 不超过 topN 时不出现「其他」。
+  assert.equal(catExpRank(txs, 8).some((r) => r.category === "其他"), false);
+});
+
+test("momPct rounds and returns null without a positive base", () => {
+  assert.equal(momPct(1120, 1000), 12);
+  assert.equal(momPct(880, 1000), -12);
+  assert.equal(momPct(0, 0), null);
+  assert.equal(momPct(100, 0), null);
+});
+
 /* ── 源码契约 ─────────────────────────────────────────────────────────── */
 
 test("ledger page is wired into App right after the stats nav item", () => {
@@ -114,25 +165,66 @@ test("ledger store exposes lifecycle actions hitting ledger endpoints", () => {
   assert.match(store, /let ledgerSeq = 0/);
 });
 
+test("ledger store exposes budget actions and prev-month stats fetch", () => {
+  for (const fn of ["loadBudgets", "setBudget", "removeBudget", "fetchMonthStats"]) {
+    assert.match(store, new RegExp(`export async function ${fn}\\(`), `store 缺少 ${fn}`);
+  }
+  // 预算写操作响应回全量列表，客户端直接替换。
+  assert.match(store, /wsPath\("\/ledger\/budgets"\)/);
+  assert.match(store, /encodeURIComponent\(category\)/);
+  assert.match(store, /st\.budgets = data\.budgets/);
+  // 登出清空预算状态。
+  assert.match(store, /st\.budgets = \[\][\s\S]*st\.budgetsLoaded = false/);
+});
+
 test("wire types mirror the backend contract", () => {
   assert.match(api, /interface WireTx \{/);
   assert.match(api, /amountFen: number/);
   assert.match(api, /interface WireLedgerMonth \{/);
   assert.match(api, /entries: WireTx\[\]/);
+  assert.match(api, /interface WireBudget \{/);
+  assert.match(api, /interface WireBudgets \{/);
+  assert.match(api, /budgets: WireBudget\[\]/);
 });
 
-test("ledger view renders month bar, three stat cards and day groups", () => {
+test("ledger view has the two-view switch, analysis section and day groups", () => {
   assert.match(view, /watch\(month, \(m\) => loadLedger\(monthKeyOf\(m\)\), \{ immediate: true \}\)/);
-  // 三卡由列表推导（恒与服务端同口径），不单独存服务端 stats。
+  // 两个视图共用 view-switch 分段控件（与目标页同款），主操作随视图变化。
+  assert.match(view, /const view = ref<"overview" \| "budget">\("overview"\)/);
+  assert.match(view, /class="view-switch" aria-label="ledger"/);
+  assert.match(view, /C\.ledgerViewOverview/);
+  assert.match(view, /C\.ledgerViewBudget/);
+  // 流水分析：与上月对比三卡 + 分类排行，全部由当月流水推导。
   assert.match(view, /monthTotals\(st\.txs\)/);
+  assert.match(view, /catExpRank\(st\.txs\)/);
+  assert.match(view, /prevMonthKey\(monthKeyOf/);
+  assert.match(view, /class="ledger-mom"/);
+  assert.match(view, /class="ledger-rank"/);
+  // 流水列表与记一笔 FAB。
   assert.match(view, /groupTxByDay\(st\.txs\)/);
-  assert.match(view, /class="ledger-stats"/);
   assert.match(view, /class="ledger-row"/);
   assert.match(view, /class="ledger-fab"/);
   // N 键唤起记一笔；组件级监听，切走即失效。
   assert.match(view, /e\.key === "n" \|\| e\.key === "N"/);
   assert.match(view, /window\.addEventListener\("keydown", onKey\)/);
   assert.match(view, /window\.removeEventListener\("keydown", onKey\)/);
+});
+
+test("ledger budget view manages long-term budgets against displayed month", () => {
+  // 进预算视图才拉预算；花费从当月流水推导（与三卡同口径）。
+  assert.match(view, /if \(v === "budget"\) loadBudgets\(\)/);
+  assert.match(view, /spendByCategory\(st\.txs\)/);
+  // 内联表单：添加/编辑共用；编辑锁分类（改名=删除重建）。
+  assert.match(view, /mode: "add" \| "edit"/);
+  assert.match(view, /:disabled="budgetForm\.mode === 'edit'"/);
+  assert.match(view, /await setBudget\(category, fen\)/);
+  assert.match(view, /removeBudget\(b\.category\)/);
+  // 进度条封顶 100%，超支用 --neg 区分。
+  assert.match(view, /Math\.min\(100, budgetPct\(b\)\)/);
+  assert.match(view, /'is-over': budgetPct\(b\) > 100/);
+  // 无预算的分类支出单列，可一键预填表单。
+  assert.match(view, /C\.ledgerBudgetNoBudget/);
+  assert.match(view, /prefillBudget\(u\.category\)/);
 });
 
 test("ledger sheet is a bottom sheet with keypad and category chips", () => {
@@ -153,6 +245,12 @@ test("copy has the ledger strings", () => {
     "ledger", "ledgerSubtitle", "ledgerFlow", "ledgerExp", "ledgerInc", "ledgerNet",
     "ledgerAdd", "ledgerEdit", "ledgerEmpty", "ledgerAmountError", "ledgerCatError",
     "ledgerSaveAnother", "ledgerLoadFailed", "txAdded", "txUpdated", "txDeleted", "txSaveFailed",
+    "ledgerViewOverview", "ledgerViewBudget", "ledgerAnalysis", "ledgerMomVs", "ledgerMomNew",
+    "ledgerCatRank", "ledgerCatRankEmpty", "ledgerBudgetHint", "ledgerBudgetAdd",
+    "ledgerBudgetEdit", "ledgerBudgetDelete", "ledgerBudgetCategory", "ledgerBudgetAmount",
+    "ledgerBudgetLeft", "ledgerBudgetOver", "ledgerBudgetEmpty", "ledgerBudgetNoBudget",
+    "ledgerBudgetSetFor", "ledgerBudgetCategoryError", "ledgerBudgetAmountError",
+    "ledgerBudgetLoadFailed", "ledgerBudgetSaveFailed",
   ]) {
     assert.match(copy, new RegExp(`\\b${key}:`), `copy.ts 缺少 ${key}`);
   }
@@ -165,11 +263,14 @@ test("App toast offers undo for deleted ledger entries", () => {
 });
 
 test("planner.css has the ledger styles, variable-driven for dark mode", () => {
-  for (const cls of [".ledger-sheet", ".ledger-keypad", ".ledger-chip", ".ledger-fab", ".ledger-row", ".ledger-stats"]) {
+  for (const cls of [".ledger-sheet", ".ledger-keypad", ".ledger-chip", ".ledger-fab", ".ledger-row", ".ledger-mom", ".ledger-rank", ".budget-card", ".budget-track", ".budget-form"]) {
     assert.match(css, new RegExp(`\\${cls}[ .{,:\\[]`), `planner.css 缺少 ${cls}`);
   }
   // 六色 [data-color] 编码复用既有变量，不新增主色。
   assert.match(css, /\.ledger-chip \.ledger-dot \{/);
+  assert.match(css, /\.ledger-rank-bar i \{/);
   assert.match(css, /background: var\(--event-line\)/);
+  assert.match(css, /\.budget-track i\.is-over \{/);
+  assert.match(css, /background: var\(--neg\)/);
   assert.doesNotMatch(css, /\.ledger-fab[^}]*#[0-9a-fA-F]{3,6}/);
 });

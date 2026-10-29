@@ -110,6 +110,20 @@ export interface WireLedgerMonth {
   stats: { exp: number; inc: number; net: number };
 }
 
+/* 分类预算：每个分类一个长期月度预算（设置一次、每月沿用直到修改）。
+ * 当月花费不从预算接口取——前端从当月流水推导，与三卡汇总同口径。 */
+export interface WireBudget {
+  id: number;
+  category: string;
+  amountFen: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WireBudgets {
+  budgets: WireBudget[];
+}
+
 export async function api<T = any>(
   path: string,
   opts: { method?: string; body?: unknown; timeoutMs?: number } = {},

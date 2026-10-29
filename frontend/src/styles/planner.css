@@ -3147,23 +3147,8 @@ button.focus-task-expand {
   min-width: 0;
   padding-bottom: 96px; /* 给 FAB 留出滚动余量 */
 }
-.ledger-stats {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 8px;
-}
-.ledger-stats b {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.ledger-stats b.is-neg {
-  color: var(--neg);
-}
-.ledger-stats b.is-pos {
-  color: var(--accent);
-}
+/* 原三卡（.ledger-stats）已由「与上月对比」三卡取代：数值口径一致，
+   每卡多一行环比。 */
 .ledger-listhead {
   display: flex;
   align-items: baseline;
@@ -3259,6 +3244,233 @@ button.focus-task-expand {
   padding: 36px 16px;
   margin-top: 14px;
   line-height: 1.8;
+}
+
+/* 流水分析：与上月对比三卡（数值口径同原三卡，多一行环比）+
+   分类支出排行（条形按当月最高分类归一，标签是占总支出比例）。
+   全部走变量，深浅色自动适配。 */
+.ledger-mom {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.ledger-mom-card {
+  background: var(--raised);
+  border-radius: var(--r-md);
+  padding: 12px 16px;
+  min-width: 0;
+}
+.ledger-mom-label {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+}
+.ledger-mom-card b {
+  display: block;
+  font-family: var(--mono);
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ledger-mom-card b.is-neg {
+  color: var(--neg);
+}
+.ledger-mom-card b.is-pos {
+  color: var(--accent);
+}
+.ledger-mom-card em {
+  display: block;
+  font-style: normal;
+  font-size: 11px;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ledger-rank-empty {
+  color: var(--faint);
+  font-size: 13px;
+  margin: 4px 2px 0;
+}
+.ledger-rank {
+  margin: 2px 0 4px;
+}
+.ledger-rank-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 2px;
+  font-size: 13px;
+}
+.ledger-rank-cat {
+  width: 64px;
+  flex: none;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ledger-rank-bar {
+  flex: 1;
+  min-width: 0;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--line);
+  overflow: hidden;
+}
+.ledger-rank-bar i {
+  display: block;
+  height: 100%;
+  min-width: 3px;
+  border-radius: inherit;
+  background: var(--event-line, var(--muted));
+}
+.ledger-rank-amt {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.ledger-rank-pct {
+  width: 48px;
+  flex: none;
+  text-align: right;
+  color: var(--faint);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 分类预算：长期月度预算卡片。进度条按花费/预算，超支变 --neg；
+   无预算分类支出行复用 ledger-row 的排版节奏。 */
+.ledger-budget-hint {
+  margin: 2px 2px 12px;
+}
+.budget-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 12px;
+  margin-top: 8px;
+}
+.budget-form input {
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  color: var(--ink);
+  padding: 0 10px;
+  font-size: 13px;
+}
+.budget-form input[disabled] {
+  color: var(--muted);
+  background: var(--line);
+}
+.budget-form input[type="number"] {
+  width: 140px;
+  font-family: var(--mono);
+}
+.budget-form-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.budget-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+  margin-top: 8px;
+}
+.budget-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.budget-nums {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.budget-nums b {
+  font-size: 14px;
+  color: var(--ink);
+}
+.budget-nums b.is-neg {
+  color: var(--neg);
+}
+.budget-nums i {
+  font-style: normal;
+  margin: 0 2px;
+  color: var(--faint);
+}
+.budget-track {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--line);
+  overflow: hidden;
+  margin-top: 10px;
+}
+.budget-track i {
+  display: block;
+  height: 100%;
+  min-width: 3px;
+  border-radius: inherit;
+  background: var(--event-line, var(--muted));
+}
+.budget-track i.is-over {
+  background: var(--neg);
+}
+.budget-foot {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+.budget-foot .is-neg {
+  color: var(--neg);
+  font-weight: 600;
+}
+.budget-unbudgeted {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  background: var(--panel);
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  padding: 0 12px;
+  margin-top: 6px;
+  font-size: 13px;
+}
+.budget-unbudgeted .ledger-amt {
+  margin-left: auto;
+}
+
+@media (max-width: 640px) {
+  .ledger-mom {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .ledger-rank-cat {
+    width: 52px;
+  }
+  .ledger-rank-pct {
+    display: none;
+  }
 }
 .ledger-fab {
   position: fixed;

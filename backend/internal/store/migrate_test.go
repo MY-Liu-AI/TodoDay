@@ -21,8 +21,8 @@ func TestMigrateAndRollback(t *testing.T) {
 	if err := st.DB().QueryRowContext(ctx, `SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
 		t.Fatalf("read version: %v", err)
 	}
-	if version != 15 {
-		t.Fatalf("expected latest version 15, got %d", version)
+	if version != 16 {
+		t.Fatalf("expected latest version 16, got %d", version)
 	}
 
 	// 每个 migration 都要有对应的 down：漏了 down 会让 RollbackAll 只回滚

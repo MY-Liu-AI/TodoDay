@@ -138,6 +138,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("PATCH /api/workspaces/{wid}/ledger/{eid}", s.withAuth(s.withWorkspace(s.updateLedgerEntry)))
 	s.mux.HandleFunc("POST /api/workspaces/{wid}/ledger/delete", s.withAuth(s.withWorkspace(s.deleteLedgerEntries)))
 	s.mux.HandleFunc("POST /api/workspaces/{wid}/ledger/restore", s.withAuth(s.withWorkspace(s.restoreLedgerEntries)))
+	// 分类预算：长期月度预算（每分类一条，upsert 按分类收敛）；成员级，
+	// 与账目同边界。写操作响应回全量列表。
+	s.mux.HandleFunc("GET /api/workspaces/{wid}/ledger/budgets", s.withAuth(s.withWorkspace(s.listLedgerBudgets)))
+	s.mux.HandleFunc("PUT /api/workspaces/{wid}/ledger/budgets", s.withAuth(s.withWorkspace(s.putLedgerBudget)))
+	s.mux.HandleFunc("DELETE /api/workspaces/{wid}/ledger/budgets/{category}", s.withAuth(s.withWorkspace(s.deleteLedgerBudget)))
 
 	// 助手配置：成员可看掩码，只有 owner 能改、能取明文凭据。
 	s.mux.HandleFunc("GET /api/workspaces/{wid}/assistant", s.withAuth(s.withWorkspace(s.getAssistantConfig)))

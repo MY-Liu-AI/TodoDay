@@ -6,7 +6,7 @@
  *  - 断网/超时/5xx：回滚本地改动并如实提示，不留下“已保存”的假象。
  */
 import { reactive } from "vue";
-import { api, ApiError, type WireGoal, type WireGoalMilestone, type WireHabit, type WireLedgerMonth, type WireTask, type WireTx } from "./api";
+import { api, ApiError, type WireBudget, type WireBudgets, type WireGoal, type WireGoalMilestone, type WireHabit, type WireLedgerMonth, type WireTask, type WireTx } from "./api";
 import { C } from "./copy";
 import { reorder as reorderList, dateValue, validState } from "./lib/model.js";
 
@@ -204,6 +204,11 @@ export const st = reactive({
   ledgerLoadError: "",
   // 最近一次软删的账目，供全局 toast 撤销（与任务/目标同一交互）。
   deletedTx: null as WireTx | null,
+  // 分类预算：每个分类一个长期月度预算（与账目同成员级边界）。
+  // 写操作响应回全量列表，客户端直接替换，不做合并。
+  budgets: [] as WireBudget[],
+  budgetsLoaded: false,
+  budgetsLoadError: "",
   // 邮箱账单导入的配置视图（同样没有任何凭据字段）。
   mail: null as MailConfigView | null,
   mailLoading: false,
@@ -1456,6 +1461,59 @@ export function dismissDeletedTx() {
   st.notice = "";
 }
 
+/* ── 分类预算：长期月度预算（设置一次、每月沿用直到修改）。写操作响应
+   回全量列表，客户端直接替换——不做合并，也不怕漏掉并发改动。 ── */
+
+export async function loadBudgets(force = false) {
+  if (!st.workspace) return;
+  if (!force && st.budgetsLoaded) return;
+  st.budgetsLoadError = "";
+  try {
+    const data = await api<WireBudgets>(wsPath("/ledger/budgets"));
+    st.budgets = data.budgets;
+    st.budgetsLoaded = true;
+  } catch (e) {
+    st.budgetsLoadError = e instanceof ApiError && e.status === 0 ? C.loadError : C.ledgerBudgetLoadFailed;
+  }
+}
+
+export async function setBudget(category: string, amountFen: number): Promise<boolean> {
+  if (!st.workspace) return false;
+  try {
+    const data = await api<WireBudgets>(wsPath("/ledger/budgets"), { method: "PUT", body: { category, amountFen } });
+    st.budgets = data.budgets;
+    st.budgetsLoaded = true;
+    return true;
+  } catch (e) {
+    fail(e);
+    return false;
+  }
+}
+
+export async function removeBudget(category: string): Promise<boolean> {
+  if (!st.workspace) return false;
+  try {
+    const data = await api<WireBudgets>(wsPath(`/ledger/budgets/${encodeURIComponent(category)}`), { method: "DELETE" });
+    st.budgets = data.budgets;
+    return true;
+  } catch (e) {
+    fail(e);
+    return false;
+  }
+}
+
+/* 与上月对比用的上月汇总：直接读 listLedger 的 stats，不碰 st.txs
+   （那是当前展示月的列表）。失败返回 null——分析区降级为只显示当月。 */
+export async function fetchMonthStats(month: string): Promise<{ exp: number; inc: number; net: number } | null> {
+  if (!st.workspace) return null;
+  try {
+    const data = await api<WireLedgerMonth>(wsPath(`/ledger?month=${month}`));
+    return data.stats;
+  } catch {
+    return null;
+  }
+}
+
 function clearLedger() {
   ledgerSeq += 1;
   st.txs = [];
@@ -1463,6 +1521,9 @@ function clearLedger() {
   st.ledgerLoaded = false;
   st.ledgerLoadError = "";
   st.deletedTx = null;
+  st.budgets = [];
+  st.budgetsLoaded = false;
+  st.budgetsLoadError = "";
 }
 registerLogoutHook(clearLedger);
 

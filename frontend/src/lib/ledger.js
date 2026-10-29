@@ -76,3 +76,47 @@ export function monthTotals(txs) {
   }
   return { exp, inc, net: inc - exp };
 }
+
+/* "YYYY-MM" → 上一个月的 "YYYY-MM"（1 月回退到上一年 12 月）。 */
+export function prevMonthKey(monthKey) {
+  const [y, m] = monthKey.split("-").map(Number);
+  return m === 1 ? y - 1 + "-12" : y + "-" + String(m - 1).padStart(2, "0");
+}
+
+/* 当月支出按分类求和：{ 分类: 分 }。只计支出——收入不占分类。 */
+export function spendByCategory(txs) {
+  const out = {};
+  for (const tx of txs) {
+    if (tx.type !== "exp") continue;
+    out[tx.category] = (out[tx.category] || 0) + tx.amountFen;
+  }
+  return out;
+}
+
+/* 分类支出排行：按金额降序，pct = 占总支出百分比（0–100，一位小数）。
+ * 超过 topN 的分类聚合进「其他」——邮件导入会造出任意分类，排行不能
+ * 无限长。当月无支出返回空数组。 */
+export function catExpRank(txs, topN = 8) {
+  const spend = spendByCategory(txs);
+  const total = Object.values(spend).reduce((a, b) => a + b, 0);
+  if (!total) return [];
+  const rows = Object.entries(spend)
+    .map(([category, amountFen]) => ({ category, amountFen }))
+    .sort((a, b) => b.amountFen - a.amountFen);
+  const head = rows.slice(0, topN);
+  const tail = rows.slice(topN);
+  if (tail.length) {
+    head.push({
+      category: "其他",
+      amountFen: tail.reduce((a, r) => a + r.amountFen, 0),
+    });
+  }
+  return head.map((r) => ({ ...r, pct: Math.round((r.amountFen / total) * 1000) / 10 }));
+}
+
+/* 环比涨幅百分比：(cur - prev) / prev * 100，四舍五入取整。
+ * prev <= 0（上月无数据）返回 null——没有可对比的基数，前端显示「—」。 */
+export function momPct(cur, prev) {
+  if (prev <= 0) return null;
+  return Math.round(((cur - prev) / prev) * 100);
+}

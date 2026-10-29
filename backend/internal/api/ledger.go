@@ -172,6 +172,44 @@ func readLedgerIDs(w http.ResponseWriter, r *http.Request) ([]int64, bool) {
 	return in.IDs, true
 }
 
+// ── 分类预算：每个分类一个长期月度预算（设置一次、每月沿用直到修改）。
+// 考核口径（当月该分类支出）由前端从当月流水推导，与三卡汇总同口径；
+// 这里只存预算行。写操作响应都回全量列表——客户端直接替换，不做合并。
+
+func (s *Server) listLedgerBudgets(w http.ResponseWriter, r *http.Request, u *store.User, wid int64) {
+	budgets, err := s.st.ListLedgerBudgets(r.Context(), wid)
+	if err != nil {
+		mapStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"budgets": budgets})
+}
+
+func (s *Server) putLedgerBudget(w http.ResponseWriter, r *http.Request, u *store.User, wid int64) {
+	var in struct {
+		Category  string `json:"category"`
+		AmountFen int64  `json:"amountFen"`
+	}
+	if err := decodeJSON(r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, "validation_failed", "请求格式错误")
+		return
+	}
+	if _, err := s.st.UpsertLedgerBudget(r.Context(), wid, in.Category, in.AmountFen); err != nil {
+		mapStoreError(w, err)
+		return
+	}
+	s.listLedgerBudgets(w, r, u, wid)
+}
+
+func (s *Server) deleteLedgerBudget(w http.ResponseWriter, r *http.Request, u *store.User, wid int64) {
+	category := r.PathValue("category")
+	if err := s.st.DeleteLedgerBudget(r.Context(), wid, category); err != nil {
+		mapStoreError(w, err)
+		return
+	}
+	s.listLedgerBudgets(w, r, u, wid)
+}
+
 func parseEID(w http.ResponseWriter, r *http.Request) (int64, bool) {
 	eid, err := strconv.ParseInt(r.PathValue("eid"), 10, 64)
 	if err != nil || eid <= 0 {
