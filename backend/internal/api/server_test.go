@@ -25,6 +25,9 @@ type testEnv struct {
 
 func newTestEnv(t *testing.T) *testEnv {
 	t.Helper()
+	// 与主密钥无关的用例（缺主密钥路径）要求服务器一定没有 box：
+	// 测试进程的环境变量不能让 NewServer 悄悄拿到真主密钥。
+	t.Setenv(secretbox.EnvKey, "")
 	st, err := store.Open(":memory:")
 	if err != nil {
 		t.Fatal(err)

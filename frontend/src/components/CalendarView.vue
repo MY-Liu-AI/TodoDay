@@ -125,7 +125,9 @@ function goToday() {
       <p v-if="!chosen.length" class="agenda-empty">{{ C.dayEmpty }}</p>
       <template v-else>
         <div v-for="i in chosen" :key="i.id" class="agenda-item" :data-color="groupColor(i.g)">
+          <!-- 里程碑标记（ms_ 前缀）不是任务：无勾选框，点击跳目标详情。 -->
           <button
+            v-if="!i.id.startsWith('ms_')"
             class="task-check"
             :class="i.done ? 'is-checked' : ''"
             :aria-label="(i.done ? C.reopen : C.complete) + ' ' + i.t"
@@ -134,6 +136,7 @@ function goToday() {
           >
             <Icon name="check" :size="14" />
           </button>
+          <span v-else class="ms-mark" aria-hidden="true"><Icon name="target" :size="12" /></span>
           <button class="agenda-task" :class="i.done ? 'is-done' : ''" @click="emit('edit', i)">
             {{ i.t }}
             <span v-if="goalBadge(i.id)" class="goal-badge" :title="goalBadge(i.id)">

@@ -9,8 +9,7 @@ import {
   dueText,
   visible,
 } from "./lib/todo.js";
-import { matches, dateValue } from "./lib/model.js";
-import { groupColor } from "./lib/palette.js";
+import { dateValue } from "./lib/model.js";
 import {
   st,
   notify,
@@ -30,10 +29,12 @@ import {
   initSession,
   restoreDeletedGoal,
   dismissDeletedGoal,
-  restoreDetachedGoalTask,
-  dismissDetachedGoalTask,
-  requestNewGoal,
+  restoreDeletedMilestone,
+  dismissDeletedMilestone,
+  requestOpenGoal,
   loadGoals,
+  restoreDeletedTx,
+  dismissDeletedTx,
 } from "./store";
 import type { Item } from "./store";
 import type { WireGoalTask } from "./api";
@@ -51,15 +52,24 @@ import AuthView from "./components/AuthView.vue";
 import FocusView from "./components/FocusView.vue";
 import SettingsView from "./components/SettingsView.vue";
 import GoalsView from "./components/GoalsView.vue";
+import HabitsView from "./components/HabitsView.vue";
+import LedgerView from "./components/LedgerView.vue";
 import { fs, restore as restoreFocus, fmtClock } from "./focus";
 
-const page = ref<"tasks" | "focus" | "goals" | "stats" | "settings">("tasks");
+const page = ref<"tasks" | "focus" | "goals" | "habits" | "ledger" | "stats">("tasks");
 const mode = ref<"list" | "calendar">("calendar");
 /* 左下角「设置」菜单的展开态。 */
 const menuOpen = ref(false);
+/* 三个配置弹框常驻挂载（dialog 走 top layer），经 ref 直接打开，
+   不再经过设置页跳转。 */
+const settingsRef = ref<{ openBot: () => void; openLlm: () => void; openMail: () => void } | null>(null);
+function openSettings(which: "bot" | "llm" | "mail") {
+  menuOpen.value = false;
+  if (which === "bot") settingsRef.value?.openBot();
+  else if (which === "llm") settingsRef.value?.openLlm();
+  else settingsRef.value?.openMail();
+}
 const filter = ref("all");
-const group = ref("");
-const query = ref("");
 const month = ref(new Date(new Date(TODAY).getFullYear(), new Date(TODAY).getMonth(), 1));
 const daySel = ref(0);
 const calendarDay = ref(TODAY);
@@ -88,9 +98,8 @@ function setTheme(next: "light" | "dark") {
 }
 setTheme(theme.value);
 
-const filtered = computed(() => matches(st.items, query.value, group.value) as Item[]);
 const shown = computed(() => {
-  let items = visible(filtered.value, filter.value, st.sort) as Item[];
+  let items = visible(st.items, filter.value, st.sort) as Item[];
   if (daySel.value) items = items.filter((i) => i.due && midnight(i.due) === daySel.value);
   return items;
 });
@@ -100,17 +109,18 @@ const pc = computed(() =>
   todayItems.value.length ? Math.round((todayDone.value / todayItems.value.length) * 100) : 0,
 );
 const open = computed(() => st.items.filter((i) => !i.done).length);
-const groups = computed(() => Array.from(new Set(st.items.map((i) => i.g))).filter(Boolean));
 const parsed = computed(() => parseInput(draft.value));
 
-/* 今日建议：每个进行中目标的下一个待办里程碑。已在今天计划里的不再建议；
+/* 今日建议：每个进行中目标的下一个待办任务。已在今天计划里的不再建议；
    目标是「提醒有哪些目标在推进」，不是把清单再复制一遍。 */
 const goalSuggestions = computed(() => {
   const todayStr = dateValue(TODAY);
   const out: { goalTitle: string; task: WireGoalTask }[] = [];
   for (const g of st.goals) {
     if (g.status !== "active") continue;
-    const next = g.tasks.find((t) => !t.done && t.due !== todayStr);
+    const next = g.milestones
+      .flatMap((m) => m.tasks)
+      .find((t) => !t.done && t.due !== todayStr);
     if (next) out.push({ goalTitle: g.title, task: next });
   }
   return out;
@@ -121,14 +131,54 @@ async function suggestToday(t: WireGoalTask) {
   if (await saveTask({ ...item, due: TODAY })) await loadGoals(true);
 }
 
-/* 页头文案。四个页面各一组，用查表而不是继续叠三元 ——
-   再嵌套一层就该看不懂了。 */
-const PAGE_META: Record<string, { overline: string; title: string; subtitle: string }> = {
-  tasks: { overline: "PLANNER", title: C.myTasks, subtitle: C.subtitle },
-  focus: { overline: "FOCUS", title: C.focus, subtitle: C.focusSubtitle },
-  goals: { overline: "GOALS", title: C.goals, subtitle: C.goalsSubtitle },
-  stats: { overline: "INSIGHTS", title: C.insights, subtitle: C.statsSubtitle },
-  settings: { overline: "SETTINGS", title: C.settings, subtitle: C.settingsSubtitle },
+/* 里程碑日历标记：进行中目标的每个里程碑，开始/截止各成一个伪日程项
+   （id 带 ms_ 前缀），与任务同 feed 进日历格。点击标记跳转到目标详情，
+   而不是打开任务编辑（它不是任务）。 */
+function msMarker(goalTitle: string, msTitle: string, kind: "s" | "d", dateStr: string, gid: number, msid: number, group: string): Item {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return {
+    id: `ms_${kind}_${gid}_${msid}`,
+    t: (kind === "s" ? C.goalMilestoneStartMark : C.goalMilestoneDueMark)
+      .replace("{goal}", goalTitle)
+      .replace("{ms}", msTitle),
+    p: 3,
+    due: midnight(new Date(y, m - 1, d)),
+    g: group || C.personal,
+    done: false,
+    at: 0,
+    version: 0,
+  };
+}
+const calendarFeed = computed(() => {
+  const out = [...st.items];
+  for (const g of st.goals) {
+    if (g.status !== "active") continue;
+    for (const m of g.milestones) {
+      if (m.start) out.push(msMarker(g.title, m.title, "s", m.start, g.id, m.id, g.group));
+      if (m.due) out.push(msMarker(g.title, m.title, "d", m.due, g.id, m.id, g.group));
+    }
+  }
+  return out;
+});
+/* 日历格点击：真任务打开编辑；里程碑标记跳目标详情页。 */
+function onCalendarEdit(i: Item) {
+  if (i.id.startsWith("ms_")) {
+    page.value = "goals";
+    requestOpenGoal(Number(i.id.split("_")[2]));
+    return;
+  }
+  editing.value = i;
+}
+
+/* 页头文案（单行 slim 版）：标题与同排副标题在左，主操作在右。
+   overline 已下线——侧栏激活态本身就是位置信息，不再重复。 */
+const PAGE_META: Record<string, { title: string; subtitle: string }> = {
+  tasks: { title: C.myTasks, subtitle: C.subtitle },
+  focus: { title: C.focus, subtitle: C.focusSubtitle },
+  goals: { title: C.goals, subtitle: C.goalsSubtitle },
+  habits: { title: C.habits, subtitle: C.habitsSubtitle },
+  stats: { title: C.insights, subtitle: C.statsSubtitle },
+  ledger: { title: C.ledger, subtitle: C.ledgerSubtitle },
 };
 const meta = computed(() => PAGE_META[page.value] ?? PAGE_META.tasks);
 
@@ -139,12 +189,10 @@ function toggle(i: Item) {
 }
 
 function newTask(due = 0) {
-  editing.value = { id: "", t: "", due, g: group.value || C.personal, p: 3, done: false, at: 0, version: 0 };
+  editing.value = { id: "", t: "", due, g: C.personal, p: 3, done: false, at: 0, version: 0 };
 }
 
 function clear() {
-  query.value = "";
-  group.value = "";
   filter.value = "all";
   daySel.value = 0;
 }
@@ -158,14 +206,13 @@ async function add() {
     t: parsed.value.t,
     p: parsed.value.p,
     due: parsed.value.due || (mode.value === "calendar" ? calendarDay.value : daySel.value),
-    g: group.value || parsed.value.g,
+    g: parsed.value.g,
   });
   if (!ok) return;
   draft.value = "";
   error.value = "";
   notify(C.added);
   filter.value = "all";
-  query.value = "";
   sound.pop();
 }
 
@@ -274,15 +321,6 @@ watch(
   <div v-else-if="st.ready" class="planner-shell">
     <a class="skip-link" href="#workspace">{{ C.myTasks }}</a>
     <aside class="planner-sidebar">
-      <div class="brand-lockup">
-        <span class="brand-mark">
-          <Icon name="check" :size="22" />
-        </span>
-        <div>
-          <strong>Todo Day<span class="brand-period">.</span></strong>
-          <p>{{ C.brand }}</p>
-        </div>
-      </div>
       <div class="workspace-label">
         <span class="workspace-avatar">{{ (st.user?.username || "P").slice(0, 1).toUpperCase() }}</span>
         <div>
@@ -300,6 +338,10 @@ watch(
           <Icon name="target" />
           {{ C.goals }}
         </button>
+        <button :class="page === 'habits' ? 'is-active' : ''" @click="page = 'habits'">
+          <Icon name="repeat" />
+          {{ C.habits }}
+        </button>
         <button :class="page === 'focus' ? 'is-active' : ''" @click="page = 'focus'">
           <Icon name="timer" />
           {{ C.focus }}
@@ -309,6 +351,10 @@ watch(
           <Icon name="stats" />
           {{ C.insights }}
         </button>
+        <button :class="page === 'ledger' ? 'is-active' : ''" @click="page = 'ledger'">
+          <Icon name="ledger" />
+          {{ C.ledger }}
+        </button>
         <!-- 窄屏侧栏折叠：设置入口挪到导航行，桌面端由 CSS 隐藏 -->
         <div class="settings-menu nav-settings">
           <button class="settings-trigger" :aria-expanded="menuOpen" @click="menuOpen = !menuOpen">
@@ -316,15 +362,17 @@ watch(
           </button>
           <div v-if="menuOpen" class="settings-backdrop" @click="menuOpen = false" />
           <div v-if="menuOpen" class="settings-popup" role="menu">
-            <button
-              role="menuitem"
-              @click="
-                menuOpen = false;
-                page = 'settings';
-              "
-            >
-              <Icon name="gear" />
-              {{ C.settings }}
+            <button role="menuitem" @click="openSettings('bot')">
+              <Icon name="robot" />
+              {{ C.assistantTitle }}
+            </button>
+            <button role="menuitem" @click="openSettings('llm')">
+              <Icon name="ai" />
+              {{ C.assistantAiTitle }}
+            </button>
+            <button role="menuitem" @click="openSettings('mail')">
+              <Icon name="mail" />
+              {{ C.mailTitle }}
             </button>
             <button role="menuitem" @click="setTheme(theme === 'light' ? 'dark' : 'light')">
               <Icon :name="theme === 'light' ? 'moon' : 'sun'" />
@@ -333,33 +381,6 @@ watch(
           </div>
         </div>
       </nav>
-      <div class="group-navigation">
-        <span class="nav-caption">{{ C.projects }}</span>
-        <button
-          :class="!group ? 'is-current' : ''"
-          @click="
-            group = '';
-            page = 'tasks';
-          "
-        >
-          <span class="group-marker" />
-          {{ C.allGroups }}
-        </button>
-        <button
-          v-for="g in groups"
-          :key="g"
-          :data-color="groupColor(g)"
-          :class="group === g ? 'is-current' : ''"
-          @click="
-            group = g;
-            page = 'tasks';
-          "
-        >
-          <span class="group-marker" />
-          <span>{{ g }}</span>
-          <small>{{ st.items.filter((i) => i.g === g && !i.done).length }}</small>
-        </button>
-      </div>
       <div class="sidebar-bottom">
         <div class="settings-menu">
           <button class="settings-trigger" :aria-expanded="menuOpen" @click="menuOpen = !menuOpen">
@@ -369,15 +390,17 @@ watch(
           <!-- 透明遮罩：点菜单外任意处收起 -->
           <div v-if="menuOpen" class="settings-backdrop" @click="menuOpen = false" />
           <div v-if="menuOpen" class="settings-popup" role="menu">
-            <button
-              role="menuitem"
-              @click="
-                menuOpen = false;
-                page = 'settings';
-              "
-            >
-              <Icon name="gear" />
-              {{ C.settings }}
+            <button role="menuitem" @click="openSettings('bot')">
+              <Icon name="robot" />
+              {{ C.assistantTitle }}
+            </button>
+            <button role="menuitem" @click="openSettings('llm')">
+              <Icon name="ai" />
+              {{ C.assistantAiTitle }}
+            </button>
+            <button role="menuitem" @click="openSettings('mail')">
+              <Icon name="mail" />
+              {{ C.mailTitle }}
             </button>
             <button role="menuitem" @click="setTheme(theme === 'light' ? 'dark' : 'light')">
               <Icon :name="theme === 'light' ? 'moon' : 'sun'" />
@@ -388,25 +411,12 @@ watch(
       </div>
     </aside>
     <main id="workspace" class="planner-workspace">
-      <!-- 目标详情页自带标题与返回入口，页头整块隐藏（大标题/副标题/新建目标按钮）。 -->
+      <!-- 目标详情页自带标题与返回入口，页头整块隐藏。 -->
       <header v-if="page !== 'goals' || !st.goalsViewing" class="workspace-header">
-        <div>
-          <div class="overline">PERSONAL / {{ meta.overline }}</div>
+        <div class="workspace-header-text">
           <h1>{{ meta.title }}</h1>
           <p>{{ meta.subtitle }}</p>
         </div>
-        <button
-          v-if="page === 'tasks'"
-          class="primary-button new-task"
-          @click="newTask(mode === 'calendar' ? calendarDay : daySel)"
-        >
-          <Icon name="plus" />
-          {{ C.newTask }}
-        </button>
-        <button v-if="page === 'goals'" class="primary-button new-goal" @click="requestNewGoal">
-          <Icon name="plus" />
-          {{ C.goalNew }}
-        </button>
       </header>
       <p v-if="st.loadError" role="alert" class="storage-warning">
         {{ st.loadError }}
@@ -429,10 +439,10 @@ watch(
               {{ label }}
             </button>
           </div>
-          <label class="task-search">
-            <Icon name="search" :size="16" />
-            <input v-model="query" type="search" :aria-label="C.search" :placeholder="C.searchPlaceholder" />
-          </label>
+          <button class="primary-button workspace-cta new-task" @click="newTask(mode === 'calendar' ? calendarDay : daySel)">
+            <Icon name="plus" />
+            {{ C.newTask }}
+          </button>
         </div>
         <div class="work-layout" :class="mode === 'calendar' ? 'is-calendar' : ''">
           <div class="task-work">
@@ -540,13 +550,13 @@ watch(
             </template>
             <CalendarView
               v-else
-              :items="filtered"
+              :items="calendarFeed"
               :month="month"
               :selected="calendarDay"
               @month="(d) => (month = d)"
               @pick="(d) => (calendarDay = d)"
               @add="newTask"
-              @edit="(i) => (editing = i)"
+              @edit="onCalendarEdit"
               @toggle="toggle"
             />
           </div>
@@ -590,8 +600,9 @@ watch(
         </div>
       </template>
       <FocusView v-else-if="page === 'focus'" />
-      <SettingsView v-else-if="page === 'settings'" />
       <GoalsView v-else-if="page === 'goals'" />
+      <HabitsView v-else-if="page === 'habits'" />
+      <LedgerView v-else-if="page === 'ledger'" />
       <div v-else class="insights-layout">
         <section>
           <p class="history-note">{{ C.historyNote }}</p>
@@ -614,8 +625,11 @@ watch(
         <span>TODO DAY <span>—</span> {{ C.subtitle }}</span>
         <span>{{ new Date().getFullYear() }}</span>
       </footer>
+      <!-- 三个配置弹框常驻挂载：侧栏「设置」菜单直接打开，不经页面跳转。
+           dialog 走 top layer，放 main 末尾不影响布局。 -->
+      <SettingsView ref="settingsRef" />
     </main>
-    <div v-if="st.notice || st.deleted || st.deletedGoal || st.detachedGoalTask || st.importPrompt" class="feedback-toast" role="status">
+    <div v-if="st.notice || st.deleted || st.deletedGoal || st.deletedMilestone || st.deletedTx || st.importPrompt" class="feedback-toast" role="status">
       <Icon name="check" :size="16" />
       <template v-if="st.importPrompt">
         <span>{{ C.importOffer.replace("{n}", String(st.importPrompt.count)) }}</span>
@@ -631,10 +645,17 @@ watch(
           <Icon name="close" :size="14" />
         </button>
       </template>
-      <template v-else-if="st.detachedGoalTask">
-        <span>{{ C.goalTaskDetached }}{{ st.detachedGoalTask.title ? " · " + st.detachedGoalTask.title : "" }}</span>
-        <button @click="restoreDetachedGoalTask">{{ C.goalUndo }}</button>
-        <button class="icon-button" :aria-label="C.close" @click="dismissDetachedGoalTask">
+      <template v-else-if="st.deletedMilestone">
+        <span>{{ C.goalMilestoneDeleted }}{{ st.deletedMilestone.milestone.title ? " · " + st.deletedMilestone.milestone.title : "" }}</span>
+        <button @click="restoreDeletedMilestone">{{ C.goalUndo }}</button>
+        <button class="icon-button" :aria-label="C.close" @click="dismissDeletedMilestone">
+          <Icon name="close" :size="14" />
+        </button>
+      </template>
+      <template v-else-if="st.deletedTx">
+        <span>{{ C.txDeleted }}{{ st.deletedTx.note ? " · " + st.deletedTx.note : "" }}</span>
+        <button @click="restoreDeletedTx">{{ C.undo }}</button>
+        <button class="icon-button" :aria-label="C.close" @click="dismissDeletedTx">
           <Icon name="close" :size="14" />
         </button>
       </template>

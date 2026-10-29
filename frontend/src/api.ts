@@ -30,8 +30,10 @@ export interface WireTask {
   position: number;
 }
 
-/* 目标：把任务串联成可跟踪的整体。进度不落库，由挂载任务的完成情况
-   推导（progress = 已完成权重 / 全部权重）；串行模式按挂载顺序解锁。 */
+/* 目标：目标 → 里程碑 → 任务 三层拆解。进度不落库，由挂载任务的完成
+   情况推导；里程碑是独立实体，自带标题与开始/截止日期，与计划页日历
+   联动（开始/截止各成一个日历标记）。「目标决策」三问（我的目标/验收
+   标准/失败代价）随目标存储，可空。 */
 export interface WireGoalTask {
   taskId: string;
   title: string;
@@ -42,21 +44,71 @@ export interface WireGoalTask {
   position: number;
 }
 
-export interface WireGoal {
+export interface WireGoalMilestone {
   id: number;
   title: string;
-  note: string;
-  group: string; // 分组标签，"" = 未分组（与任务分组同名同色）
-  mode: "parallel" | "sequential";
-  due: string; // "YYYY-MM-DD" 或 ""（无排期）
-  status: "active" | "done" | "archived";
+  start: string; // "YYYY-MM-DD" 或 ""（未设开始）
+  due: string; // "YYYY-MM-DD" 或 ""（未设截止）
   position: number;
   version: number;
-  createdAt: string; // "YYYY-MM-DD"，健康度的时间起点
   tasks: WireGoalTask[];
 }
 
+export interface WireGoal {
+  id: number;
+  title: string;
+  goalText: string; // 目标决策·我的目标
+  acceptance: string; // 目标决策·验收标准
+  failureCost: string; // 目标决策·失败代价
+  group: string; // 分组标签，"" = 未分组（与任务分组同名同色）
+  status: "active" | "done" | "archived";
+  position: number;
+  version: number;
+  createdAt: string; // YYYY-MM-DD
+  milestones: WireGoalMilestone[];
+}
+
+/* 习惯：工作区级的定期练习（健身/阅读这类没有终点的重复事项），与目标
+   相互独立。标题 + 每周重复的星期（1=周一 … 7=周日，可多选）。服务端把
+   习惯滚动展开成真实任务实例（未来 8 周），实例出现在计划页/日历/今天
+   清单，可勾选完成。 */
+export interface WireHabitTask {
+  taskId: string;
+  title: string;
+  done: boolean;
+  due: string; // YYYY-MM-DD
+  version: number;
+}
+
+export interface WireHabit {
+  id: number;
+  title: string;
+  weekdays: number[]; // [1..7] 升序去重
+  position: number;
+  version: number;
+  tasks: WireHabitTask[]; // 本周一起的实例（习惯页本周打卡条用）
+}
+
 const TIMEOUT = 12_000;
+
+/* 记账本：一笔收入或支出。date 是 YYYY-MM-DD 本地日历日期（与任务 due 同
+ * 约定，不做时区换算）；category 是自由文本（六分类名之一），收入为 ""。 */
+export interface WireTx {
+  id: number;
+  date: string; // YYYY-MM-DD
+  type: "exp" | "inc";
+  category: string;
+  amountFen: number;
+  note: string;
+  version: number;
+  createdAt: string;
+}
+
+/* 单月列表 + 同口径汇总（只计未删除）。 */
+export interface WireLedgerMonth {
+  entries: WireTx[];
+  stats: { exp: number; inc: number; net: number };
+}
 
 export async function api<T = any>(
   path: string,

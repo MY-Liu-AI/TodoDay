@@ -16,7 +16,6 @@ const emit = defineEmits<{
 const refEl = ref<HTMLDialogElement | null>(null);
 const title = ref(props.item.t);
 const date = ref(dateValue(props.item.due));
-const group = ref(props.item.g);
 const priority = ref(props.item.p);
 const error = ref("");
 let previous: Element | null = null;
@@ -46,7 +45,8 @@ function submit() {
     ...props.item,
     t: title.value.trim(),
     due,
-    g: group.value.trim() || C.personal,
+    /* 不再有分组输入：编辑时保留任务原分组（不清空旧值），新建走默认分组。 */
+    g: (props.item.g || "").trim() || C.personal,
     p: priority.value,
   });
 }
@@ -86,10 +86,6 @@ function onCancel() {
         <label class="form-field">
           {{ C.date }}
           <input v-model="date" type="date" />
-        </label>
-        <label class="form-field">
-          {{ C.group }}
-          <input v-model="group" maxlength="40" />
         </label>
       </div>
       <label class="form-field">

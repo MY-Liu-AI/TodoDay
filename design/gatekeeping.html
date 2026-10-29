@@ -1,0 +1,749 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>把关 · GATEKEEPING — 媒体传播的不对称性</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;600;900&family=Inter:ital,wght@0,300;1,300&display=swap" rel="stylesheet">
+<style>
+  :root { --paper:#F5F0E8; --ink:#1A1A1A; --ochre:#B5512D; --indigo:#2E4057; --sage:#6B7F59; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#141210; color:var(--paper); font-family:'Inter','Noto Serif SC',serif;
+         display:flex; flex-direction:column; align-items:center; padding:24px; min-height:100vh; }
+  h1 { font-family:'Noto Serif SC',serif; font-weight:900; font-size:22px; letter-spacing:6px; margin-bottom:2px; }
+  .sub { font-size:12px; color:#8a8378; letter-spacing:2px; margin-bottom:16px; font-style:italic; }
+  #stage { width:min(1120px,94vw); aspect-ratio:16/9; background:#000;
+           box-shadow:0 12px 60px rgba(0,0,0,.6); border:1px solid #2a261f; }
+  #ui { display:flex; gap:12px; align-items:center; margin-top:16px; flex-wrap:wrap; justify-content:center; }
+  button { background:transparent; color:var(--paper); border:1px solid #5a5245; padding:9px 26px;
+           font-family:'Noto Serif SC',serif; font-size:14px; letter-spacing:4px; cursor:pointer;
+           transition:all .2s; }
+  button:hover:not(:disabled) { border-color:var(--ochre); color:var(--ochre); }
+  button:disabled { opacity:.35; cursor:not-allowed; }
+  #time { font-size:12px; color:#8a8378; font-variant-numeric:tabular-nums; letter-spacing:1px; min-width:110px; }
+  #status { font-size:12px; color:#b8ae9c; margin-top:10px; letter-spacing:1px; min-height:16px; }
+  #drop { margin-top:14px; border:1px dashed #4a4237; padding:12px 30px; font-size:12px; color:#8a8378;
+          letter-spacing:2px; cursor:pointer; transition:border-color .2s; text-align:center; }
+  #drop.over { border-color:var(--ochre); color:var(--ochre); }
+  details { margin-top:14px; color:#8a8378; font-size:12px; }
+  summary { cursor:pointer; letter-spacing:2px; }
+  details .row { margin-top:8px; display:flex; gap:6px; flex-wrap:wrap; justify-content:center; }
+  details button { padding:4px 12px; font-size:11px; letter-spacing:1px; }
+  .note { font-size:11px; color:#5f584d; margin-top:10px; letter-spacing:1px; line-height:1.8; text-align:center; }
+</style>
+</head>
+<body>
+<h1>把关</h1>
+<div class="sub">GATEKEEPING · the asymmetry of media · 30s / 1920×1080 / 30fps</div>
+<canvas id="stage" width="1920" height="1080"></canvas>
+<div id="ui">
+  <button id="btnPlay" disabled>播 放</button>
+  <button id="btnExport" disabled>导出 MP4</button>
+  <span id="time">0.00 / 30.00 s</span>
+</div>
+<div id="status">字体与字形采样初始化中……</div>
+<div id="drop">拖入 BGM《千年之后》mp3（可选，仅用于播放预览，导出为无声片）</div>
+<details>
+  <summary>质检 · 关键帧定格</summary>
+  <div class="row" id="qc"></div>
+</details>
+<div class="note">导出为逐帧渲染（Canvas captureStream），期间请保持本标签页在前台。MP4 优先（H.264），<br>浏览器不支持时自动降级 WebM，可用 ffmpeg 合流：ffmpeg -i video.webm -i bgm.mp3 -c:v copy -c:a aac -shortest out.mp4</div>
+
+<script>
+'use strict';
+/* ============================================================
+   《把关》—— 媒体传播的不对称性 · 30s 科普动画
+   全部画面由 render(t) 按时间戳确定性生成，无外部图片素材
+   ============================================================ */
+const W = 1920, H = 1080, FPS = 30, DUR = 30;
+const T_SHATTER = 17.378;               // 核心重拍爆点
+const canvas = document.getElementById('stage');
+const ctx = canvas.getContext('2d');
+
+/* ---------- 调色板 ---------- */
+const PAPER='#F5F0E8', INK='#1A1A1A', OCHRE='#B5512D', INDIGO='#2E4057', SAGE='#6B7F59', CORAL='#C96F4A';
+const DARKBG='#131109';   // 幕间暗底（暖黑）
+
+/* ---------- 数学工具 ---------- */
+const clamp=(v,a,b)=>v<a?a:v>b?b:v;
+const lerp=(a,b,u)=>a+(b-a)*u;
+const ss=(a,b,t)=>{const u=clamp((t-a)/(b-a),0,1);return u*u*(3-2*u);};
+const eoc=u=>1-Math.pow(1-clamp(u,0,1),3);
+const eoq=u=>1-Math.pow(1-clamp(u,0,1),4);
+const mod=(a,n)=>((a%n)+n)%n;
+
+/* ---------- 确定性随机 ---------- */
+function mulberry32(seed){ let a=seed>>>0; return function(){ a|=0;a=a+0x6D2B79F5|0;
+  let t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+
+/* ---------- Simplex Noise 3D ---------- */
+const Noise=(()=>{
+  const grad=[[1,1,0],[-1,1,0],[1,-1,0],[-1,-1,0],[1,0,1],[-1,0,1],[1,0,-1],[-1,0,-1],[0,1,1],[0,-1,1],[0,1,-1],[0,-1,-1]];
+  const p=new Uint8Array(256), pm=new Uint8Array(512), pm12=new Uint8Array(512);
+  const r=mulberry32(1337);
+  for(let i=0;i<256;i++)p[i]=i;
+  for(let i=255;i>0;i--){const j=(r()*(i+1))|0;const q=p[i];p[i]=p[j];p[j]=q;}
+  for(let i=0;i<512;i++){pm[i]=p[i&255];pm12[i]=pm[i]%12;}
+  const F=1/3,G=1/6;
+  return { n3(x,y,z){
+    const s=(x+y+z)*F,i=Math.floor(x+s),j=Math.floor(y+s),k=Math.floor(z+s);
+    const t=(i+j+k)*G,x0=x-(i-t),y0=y-(j-t),z0=z-(k-t);
+    let i1,j1,k1,i2,j2,k2;
+    if(x0>=y0){if(y0>=z0){i1=1;j1=0;k1=0;i2=1;j2=1;k2=0;}else if(x0>=z0){i1=1;j1=0;k1=0;i2=1;j2=0;k2=1;}else{i1=0;j1=0;k1=1;i2=1;j2=0;k2=1;}}
+    else{if(y0<z0){i1=0;j1=0;k1=1;i2=0;j2=1;k2=1;}else if(x0<z0){i1=0;j1=1;k1=0;i2=0;j2=1;k2=1;}else{i1=0;j1=1;k1=0;i2=1;j2=1;k2=0;}}
+    const x1=x0-i1+G,y1=y0-j1+G,z1=z0-k1+G,x2=x0-i2+2*G,y2=y0-j2+2*G,z2=z0-k2+2*G,x3=x0-1+3*G,y3=y0-1+3*G,z3=z0-1+3*G;
+    const ii=i&255,jj=j&255,kk=k&255; let n=0,t0,g;
+    t0=0.6-x0*x0-y0*y0-z0*z0; if(t0>0){t0*=t0;g=grad[pm12[ii+pm[jj+pm[kk]]]];n+=t0*t0*(g[0]*x0+g[1]*y0+g[2]*z0);}
+    t0=0.6-x1*x1-y1*y1-z1*z1; if(t0>0){t0*=t0;g=grad[pm12[ii+i1+pm[jj+j1+pm[kk+k1]]]];n+=t0*t0*(g[0]*x1+g[1]*y1+g[2]*z1);}
+    t0=0.6-x2*x2-y2*y2-z2*z2; if(t0>0){t0*=t0;g=grad[pm12[ii+i2+pm[jj+j2+pm[kk+k2]]]];n+=t0*t0*(g[0]*x2+g[1]*y2+g[2]*z2);}
+    t0=0.6-x3*x3-y3*y3-z3*z3; if(t0>0){t0*=t0;g=grad[pm12[ii+1+pm[jj+1+pm[kk+1]]]];n+=t0*t0*(g[0]*x3+g[1]*y3+g[2]*z3);}
+    return 32*n; }};
+})();
+
+/* ---------- 粒子发光贴图（预渲染，保证性能） ---------- */
+function makeSprite(rgb){
+  const c=document.createElement('canvas');c.width=c.height=28;const g=c.getContext('2d');
+  const gr=g.createRadialGradient(14,14,0,14,14,14);
+  gr.addColorStop(0,'rgba(255,255,255,0.95)');
+  gr.addColorStop(0.25,`rgba(${rgb},0.85)`);
+  gr.addColorStop(1,`rgba(${rgb},0)`);
+  g.fillStyle=gr;g.fillRect(0,0,28,28);return c;
+}
+const SPR = {
+  glow : makeSprite('232,214,178'),   // 米金（暗场信息流）
+  ochre: makeSprite('181,81,45'),
+  indigo:makeSprite('46,64,87'),
+  sage : makeSprite('107,127,89'),
+  coral: makeSprite('201,111,74'),
+  gray : makeSprite('150,146,138'),
+  paper: makeSprite('245,240,232'),
+  ink  : makeSprite('26,26,26'),
+};
+function drawSpr(spr,x,y,size,alpha){
+  if(alpha<=0.003)return;
+  ctx.globalAlpha=clamp(alpha,0,1);
+  ctx.drawImage(spr,x-size/2,y-size/2,size,size);
+}
+
+/* ---------- 粒子池（固定种子，确定性） ---------- */
+const HERO=3000, TIDE=1300, STREAM=1600, GRAYP=1200;
+function makePool(n,seed){const out=[];for(let i=0;i<n;i++){const r=mulberry32(seed+i*7919);
+  out.push({r1:r(),r2:r(),r3:r(),r4:r(),r5:r(),r6:r(),r7:r()});}return out;}
+const heroes=makePool(HERO,101), tides=makePool(TIDE,202), streams=makePool(STREAM,303), grays=makePool(GRAYP,404);
+const PAL=[SPR.ochre,SPR.indigo,SPR.sage,SPR.coral,SPR.ochre,SPR.indigo]; // 加权色盘
+
+/* ---------- 字形/形态采样（字体就绪后构建） ---------- */
+let glyphPts=[], illuPts=[], silStandPts=[], silSitAPts=[], silSitBPts=[];
+function sampleCanvas(draw,step,max,seed){
+  const c=document.createElement('canvas');c.width=W;c.height=H;const g=c.getContext('2d');
+  draw(g);
+  const d=g.getImageData(0,0,W,H).data,pts=[];
+  for(let y=0;y<H;y+=step)for(let x=0;x<W;x+=step)
+    if(d[(y*W+x)*4+3]>120)pts.push({x,y});
+  const r=mulberry32(seed);
+  for(let i=pts.length-1;i>0;i--){const j=(r()*(i+1))|0;const q=pts[i];pts[i]=pts[j];pts[j]=q;}
+  return max?pts.slice(0,max):pts;
+}
+function buildSamples(){
+  // 「把关」爆点大字
+  glyphPts=sampleCanvas(g=>{g.fillStyle='#000';g.font='900 800px "Noto Serif SC",serif';
+    g.textAlign='center';g.textBaseline='middle';g.fillText('把关',960,520);},7,HERO,11);
+  // 假象图景（S4）：太阳/群山/河流/屋舍，逐点带色
+  (()=>{const c=document.createElement('canvas');c.width=W;c.height=H;const g=c.getContext('2d');
+    g.fillStyle=OCHRE;g.beginPath();g.arc(1055,395,66,0,7);g.fill();
+    g.fillStyle=SAGE;g.beginPath();g.moveTo(680,730);g.lineTo(935,425);g.lineTo(1090,730);g.closePath();g.fill();
+    g.fillStyle='#5c6e4c';g.beginPath();g.moveTo(960,730);g.lineTo(1215,465);g.lineTo(1280,730);g.closePath();g.fill();
+    g.fillStyle=INDIGO;g.beginPath();g.moveTo(660,730);g.quadraticCurveTo(960,775,1290,725);
+    g.lineTo(1290,800);g.quadraticCurveTo(960,850,660,802);g.closePath();g.fill();
+    g.fillStyle=CORAL;for(let i=0;i<9;i++){g.fillRect(730+i*62+(i%3)*8,700+(i%2)*10,10,10);}
+    const d=g.getImageData(0,0,W,H).data,pts=[];
+    for(let y=340;y<860;y+=5)for(let x=640;x<1300;x+=5){const a=d[(y*W+x)*4+3];
+      if(a>120)pts.push({x,y,c:[d[(y*W+x)*4],d[(y*W+x)*4+1],d[(y*W+x)*4+2]]});}
+    const r=mulberry32(77);
+    for(let i=pts.length-1;i>0;i--){const j=(r()*(i+1))|0;const q=pts[i];pts[i]=pts[j];pts[j]=q;}
+    illuPts=pts.slice(0,HERO);
+  })();
+  // 把关人立姿剪影（含手臂与筛网圆环）
+  silStandPts=sampleCanvas(g=>{g.fillStyle='#000';g.strokeStyle='#000';
+    g.beginPath();g.arc(960,378,72,0,7);g.fill();                      // 头
+    g.beginPath();g.moveTo(845,1080);g.quadraticCurveTo(840,520,900,472);
+    g.quadraticCurveTo(960,440,1020,472);g.quadraticCurveTo(1080,520,1075,1080);g.closePath();g.fill(); // 躯干
+    g.lineWidth=52;g.lineCap='round';g.beginPath();g.moveTo(1005,560);g.lineTo(1168,600);g.stroke();   // 手臂
+    g.lineWidth=34;g.beginPath();g.arc(1245,618,128,0,7);g.stroke();   // 筛网环
+  },7,0,22);
+  // 观众坐姿剪影：A 低头 / B 抬头（23.9s 脉冲）
+  const seated=(g,up)=>{g.fillStyle='#000';
+    g.beginPath();g.arc(up?962:966,up?628:716,up?62:64,0,7);g.fill();
+    g.beginPath();g.moveTo(742,1080);g.quadraticCurveTo(790,872,902,806);
+    g.quadraticCurveTo(988,762,1052,842);g.quadraticCurveTo(1120,928,1146,1080);g.closePath();g.fill();};
+  silSitAPts=sampleCanvas(g=>seated(g,false),7,500,33);
+  silSitBPts=sampleCanvas(g=>seated(g,true),7,500,44);
+}
+
+/* ---------- 字幕 ---------- */
+const SUBS=[
+  {a:0.3, b:3.6, zh:'你看到的每条新闻', en:'All the news you see'},
+  {a:4.3, b:8.6, zh:'你和世界之间，有一道门', en:'Between the world and you, a gate'},
+  {a:9.3, b:13.6, zh:'能被看见的，都是被选择的', en:'What you see is what was chosen'},
+  {a:14.2,b:16.9, zh:'而你以为那就是全部', en:'And you took it for the whole world'},
+  {a:17.5,b:20.2, zh:'把关', en:'GATEKEEPING'},
+  {a:20.4,b:23.3, zh:'不是你选择了信息', en:"You didn't choose the information"},
+  {a:23.4,b:25.9, zh:'门外，是被挡住的99%', en:'Beyond the gate, the 99% you never see'},
+  {a:26.2,b:27.9, zh:'是信息选择了你', en:"You didn't choose the news."},
+  {a:28.1,b:29.8, zh:'看见那扇门，你就自由了一半', en:'It chose you.'},
+];
+function bgLum(t){ // 背景亮度 0暗 1纸
+  return clamp(ss(4.2,6.2,t)-ss(20,21.4,t)+ss(26.4,28.6,t),0,1);
+}
+function drawSubtitles(t){
+  for(const s of SUBS){
+    if(t<s.a||t>s.b)continue;
+    const a=Math.min(ss(s.a,s.a+0.25,t),1-ss(s.b-0.28,s.b,t));
+    const col=bgLum(t)>0.5?INK:PAPER;
+    ctx.globalAlpha=a;ctx.fillStyle=col;textBaseline='middle';
+    ctx.font='600 60px "Noto Serif SC",serif';ctx.textAlign='center';
+    ctx.fillText(s.zh,960,928);
+    ctx.font='italic 300 28px Inter,"Noto Serif SC",serif';
+    ctx.globalAlpha=a*0.72;
+    ctx.fillText(s.en,960,986);
+  }
+  ctx.globalAlpha=1;
+}
+
+/* ---------- 胶片颗粒 ---------- */
+const grainTiles=[];
+for(let k=0;k<6;k++){const c=document.createElement('canvas');c.width=c.height=256;
+  const g=c.getContext('2d'),d=g.createImageData(256,256),r=mulberry32(900+k);
+  for(let i=0;i<d.data.length;i+=4){const v=r()*255|0;d.data[i]=d.data[i+1]=d.data[i+2]=v;d.data[i+3]=255;}
+  g.putImageData(d,0,0);grainTiles.push(c);}
+function drawGrain(t){
+  const idx=Math.floor(t*24)%6;
+  ctx.save();ctx.globalAlpha=0.06+0.04*(0.5+0.5*Math.sin(t*13.7+Math.sin(t*7.3)*2));
+  ctx.globalCompositeOperation='overlay';
+  const pat=ctx.createPattern(grainTiles[idx],'repeat');
+  ctx.translate((Math.floor(t*24)*37)%256,(Math.floor(t*24)*53)%256);
+  ctx.fillStyle=pat;ctx.fillRect(-256,-256,W+512,H+512);
+  ctx.restore();
+}
+
+/* ---------- 背景 ---------- */
+function drawBG(t){
+  const L=bgLum(t);
+  const c0=[19,17,9], c1=[245,240,232]; // DARKBG -> PAPER
+  ctx.fillStyle=`rgb(${lerp(c0[0],c1[0],L)|0},${lerp(c0[1],c1[1],L)|0},${lerp(c0[2],c1[2],L)|0})`;
+  ctx.fillRect(0,0,W,H);
+  // 暗场微光晕 / 纸场暗角
+  const v=ctx.createRadialGradient(960,540,420,960,540,1250);
+  if(L>0.5){v.addColorStop(0,'rgba(0,0,0,0)');v.addColorStop(1,'rgba(26,26,26,0.16)');}
+  else{v.addColorStop(0,'rgba(232,214,178,0.05)');v.addColorStop(1,'rgba(0,0,0,0.55)');}
+  ctx.fillStyle=v;ctx.fillRect(0,0,W,H);
+}
+function roundRect(x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();}
+
+/* ---------- 层A：信息潮汐 + 小窗口（S1，延续至S2缩放） ---------- */
+const WIN1={cx:1230,cy:430,w:420,h:560};
+function drawTide(t,alpha){
+  if(alpha<=0)return;
+  const sc=lerp(1,0.56,ss(4.2,6.8,t));      // 镜头拉开
+  ctx.save();ctx.translate(960,540);ctx.scale(sc,sc);ctx.translate(-960,-540);
+  const x0=WIN1.cx-WIN1.w/2, yTop=WIN1.cy-WIN1.h/2, yBot=WIN1.cy+WIN1.h/2;
+  // 窗口框
+  const bob=Math.sin(t*0.9)*6;
+  ctx.globalAlpha=alpha;ctx.strokeStyle=OCHRE;ctx.lineWidth=7/sc;
+  roundRect(x0,WIN1.cy-WIN1.h/2+bob,WIN1.w,WIN1.h,20);ctx.stroke();
+  ctx.fillStyle='rgba(245,240,232,0.05)';
+  roundRect(x0+8,WIN1.cy-WIN1.h/2+8+bob,WIN1.w-16,WIN1.h-16,14);ctx.fill();
+  for(const p of tides){
+    const lane=lerp(70,1010,p.r1), v=lerp(380,780,p.r2);
+    const arriveT=(x0+90)/v, P=arriveT+2.2, lt=mod(t+p.r3*P*0.97,P);
+    let x,y,a=0.85,sz=lerp(5,11,p.r5),spr=SPR.glow;
+    if(lt<arriveT){
+      x=-90+v*lt;y=lane+Math.sin(lt*1.6+p.r4*9)*16+Noise.n3(p.r6*90,p.r1*90,t*0.35)*10;
+      a*=ss(-60,20,x);
+    } else {
+      const dt=lt-arriveT;
+      if(p.r4<0.06){ // ~6% 通过窗口 → 染色、放大
+        const tx=lerp(x0+30,WIN1.cx+WIN1.w/2-30,p.r5), ty=lerp(yTop+30,yBot-30,p.r6);
+        const u=eoc(dt/0.9);
+        x=lerp(x0,tx,u);y=lerp(lane,ty,u)+bob;
+        spr=PAL[(p.r7*PAL.length)|0];sz=lerp(6,14,p.r5);
+        if(dt>1.1)a*=1-ss(1.1,2.0,dt);
+      } else {       // 撞窗 → 沿壁下滑、灰化飘散
+        x=x0-4-Noise.n3(p.r6*50,dt*2,0)*8;y=lane+380*dt*dt+bob;
+        spr=SPR.gray;a*=1-ss(0.15,1.3,dt);
+        if(dt<0.45){ // 撞击涟漪
+          drawSpr(SPR.paper,x0,y,20+dt*300,(0.35-dt*0.75)*alpha);
+        }
+      }
+    }
+    drawSpr(spr,x,y,sz,a*alpha);
+  }
+  ctx.restore();
+}
+
+/* ---------- S2：把关人剪影成形 + 8.6s 次重拍脉冲 ---------- */
+function drawGatekeeper(t,alpha){
+  if(alpha<=0)return;
+  const emerge=eoq(ss(4.6,8.3,t));       // 粒子收束成人形
+  const sc=lerp(1.55,1.0,ss(4.2,6.8,t)); // 与镜头拉开同步
+  const shiftX=lerp(0,-245,ss(9,10.3,t));// S3 向左让位（衔接）
+  const sA=1-ss(14,15,t);                // S4 淡出
+  const solid=ss(6.4,8.3,t);             // 实体剪影浮现
+  ctx.save();ctx.translate(960+shiftX,540);ctx.scale(sc,sc);ctx.translate(-960,-540);
+  // 实体
+  ctx.globalAlpha=alpha*solid*sA;
+  ctx.fillStyle=INK;
+  ctx.beginPath();ctx.arc(960,378,72,0,7);ctx.fill();
+  ctx.beginPath();ctx.moveTo(845,1080);ctx.quadraticCurveTo(840,520,900,472);
+  ctx.quadraticCurveTo(960,440,1020,472);ctx.quadraticCurveTo(1080,520,1075,1080);ctx.closePath();ctx.fill();
+  ctx.strokeStyle=INK;ctx.lineWidth=52;ctx.lineCap='round';
+  ctx.beginPath();ctx.moveTo(1005,560);ctx.lineTo(1168,600);ctx.stroke();
+  ctx.lineWidth=34;ctx.beginPath();ctx.arc(1245,618,128,0,7);ctx.stroke();
+  // 8.6s 次重拍：脉冲光环 + 轮廓染色
+  const pl=Math.exp(-Math.pow((t-8.6)*3.2,2));
+  if(pl>0.02){
+    ctx.globalAlpha=alpha*pl*0.55*sA;
+    ctx.strokeStyle=OCHRE;ctx.lineWidth=5;
+    ctx.beginPath();ctx.arc(960,540,140+(1-pl)*520,0,7);ctx.stroke();
+    ctx.globalAlpha=alpha*pl*0.22*sA;ctx.fillStyle=OCHRE;
+    ctx.beginPath();ctx.arc(960,378,74+pl*4,0,7);ctx.fill();
+    ctx.fillRect(843,470,236,610);
+  }
+  // 收束粒子（潮汐粒子 → 剪影采样点）
+  ctx.globalAlpha=1;
+  const L=silStandPts.length;
+  tides.forEach((p,i)=>{
+    const tgt=silStandPts[i%L];
+    const v=lerp(380,780,p.r2);
+    const fx=-90+v*mod(t+p.r3*4,4)+Noise.n3(p.r6*90,p.r1*90,t*0.35)*10;
+    const fy=lerp(70,1010,p.r1)+Math.sin(t*1.6+p.r4*9)*16;
+    const u=emerge*(0.85+0.15*p.r7);
+    const x=lerp(fx,tgt.x,u)+Noise.n3(p.r1*40,t*0.6,p.r6*40)*(1-u)*14;
+    const y=lerp(fy,tgt.y,u)+Noise.n3(p.r2*40,t*0.6,p.r5*40)*(1-u)*14;
+    drawSpr(SPR.ink,x,y,lerp(8,5,u),alpha*(1-solid*0.85)*sA*0.9);
+  });
+  ctx.restore();
+}
+
+/* ---------- S3：筛网过滤（真实碰撞/通过判定 + 概率可视化） ---------- */
+const SIEVE={x:700,y:560,R:132}, WIN3={x:1180,y:270,w:300,h:400};
+function drawFiltering(t,alpha){
+  if(alpha<=0)return;
+  const winX=lerp(WIN1.cx-WIN1.w/2*0.56,WIN3.x,ss(9,10.3,t));
+  const winY=lerp(WIN1.cy-WIN1.h/2*0.56+40,WIN3.y,ss(9,10.3,t));
+  const winW=lerp(WIN1.w*0.56,WIN3.w,ss(9,10.3,t));
+  const winH=lerp(WIN1.h*0.56,WIN3.h,ss(9,10.3,t));
+  // 窗口（承接S2位置）
+  ctx.globalAlpha=alpha;ctx.strokeStyle=OCHRE;ctx.lineWidth=6;
+  roundRect(winX,winY,winW,winH,16);ctx.stroke();
+  ctx.save();roundRect(winX+6,winY+6,winW-12,winH-12,12);ctx.clip();
+  ctx.fillStyle='rgba(245,240,232,0.35)';ctx.fillRect(winX,winY,winW,winH);
+  ctx.restore();
+  // 筛网（把关人手中）
+  const sx=lerp(1245*0.56+960*0.44,700,ss(9,10.3,t));
+  const sy=lerp(618*0.56+540*0.44,560,ss(9,10.3,t));
+  ctx.save();ctx.globalAlpha=alpha*0.9;ctx.strokeStyle=INK;
+  ctx.lineWidth=3;ctx.beginPath();ctx.arc(sx,sy,SIEVE.R,0,7);ctx.stroke();
+  ctx.lineWidth=1.2;ctx.globalAlpha=alpha*0.5;
+  for(let k=1;k<4;k++){ctx.beginPath();ctx.arc(sx,sy,SIEVE.R*k/4,0,7);ctx.stroke();}
+  for(let k=0;k<10;k++){const a=k/10*Math.PI*2+Math.sin(t*0.7)*0.03;
+    ctx.beginPath();ctx.moveTo(sx+Math.cos(a)*SIEVE.R*0.25,sy+Math.sin(a)*SIEVE.R*0.25);
+    ctx.lineTo(sx+Math.cos(a)*SIEVE.R,sy+Math.sin(a)*SIEVE.R);ctx.stroke();}
+  ctx.restore();
+  // 粒子流：左→右穿筛
+  for(const p of streams){
+    const lane=lerp(430,690,p.r1), v=lerp(300,600,p.r2);
+    const arriveT=(SIEVE.x+70)/v, P=arriveT+3.4, lt=mod(t*0.98+p.r3*P*0.96,P);
+    const wob=Noise.n3(p.r6*80,p.r1*80,t*0.4)*14;
+    let x,y,a=0.8*alpha,sz=lerp(5,9,p.r5),spr=SPR.gray;
+    if(lt<arriveT){
+      x=-70+v*lt;y=lane+wob+Math.sin(lt*2+p.r4*8)*8;
+      a*=ss(-50,30,x);
+    } else {
+      const dt=lt-arriveT, dy=lane-SIEVE.y;
+      if(Math.abs(dy)>SIEVE.R-8){ // 未对准筛网 → 从旁流过（灰色）
+        x=-70+v*lt;y=lane+wob;a*=1-ss(1600,1800,x);
+        if(x>SIEVE.x)a*=0.35;
+      } else if(p.r4<0.08){        // 8% 通过：染色、放大、飞入窗口
+        spr=PAL[(p.r7*PAL.length)|0];
+        const tx=lerp(winX+26,winX+winW-26,p.r5),ty=lerp(winY+26,winY+winH-26,p.r6);
+        const u=eoc(dt/1.1);
+        x=lerp(SIEVE.x,tx,u);y=lerp(lane,ty,u);
+        sz=lerp(7,15,p.r5);
+        if(dt>1.6)a*=1-ss(1.6,2.6,dt);
+      } else {                     // 被筛网挡住：贴网下滑、灰化飘散
+        x=SIEVE.x+(p.r5-0.5)*30+Math.sin(dt*3+p.r6*9)*4;
+        y=lane+300*dt*dt;
+        a*=1-ss(0.1,1.5,dt);
+      }
+      if(Math.abs(dy)<=SIEVE.R-8&&dt<0.3) // 撞击微光
+        drawSpr(SPR.paper,SIEVE.x,lane,14+dt*60,(0.3-dt)*1.6*alpha);
+    }
+    drawSpr(spr,x,y,sz,clamp(a,0,1));
+  }
+  // 标注：议程设置 + 通过率
+  const la=ss(11,12,t)*alpha;
+  if(la>0.01){
+    ctx.globalAlpha=la;ctx.fillStyle=INK;ctx.textAlign='left';ctx.textBaseline='middle';
+    ctx.font='600 44px "Noto Serif SC",serif';
+    ctx.fillText('议程设置',1420,760);
+    ctx.font='italic 300 26px Inter,serif';ctx.globalAlpha=la*0.7;
+    ctx.fillText('Agenda Setting',1422,806);
+    ctx.globalAlpha=la*0.85;ctx.strokeStyle=INK;ctx.lineWidth=2;
+    ctx.beginPath();ctx.moveTo(1422,700);ctx.lineTo(1422+140,700);ctx.stroke();
+    ctx.font='300 22px "Noto Serif SC",serif';ctx.globalAlpha=la*0.75;
+    ctx.fillText('通过率 ≈ 8%',1422,846);
+    ctx.fillStyle=OCHRE;ctx.fillRect(1422,868,140*0.08,6);
+    ctx.strokeStyle=INK;ctx.lineWidth=1;ctx.strokeRect(1422,868,140,6);
+  }
+  ctx.globalAlpha=1;
+}
+
+/* ---------- S4：假象图景拼合 ---------- */
+const WIN4={x:640,y:220,w:640,h:640};
+function drawIllusion(t,alpha){
+  if(alpha<=0)return;
+  const u=ss(14.2,16.9,t);               // 拼合进度
+  const breath=1+0.005*Math.sin(t*2.2);  // 蓄力呼吸
+  // 窗口框：S3 位置 → 中央放大
+  const m=ss(14,15.4,t);
+  const wx=lerp(WIN3.x,WIN4.x,m),wy=lerp(WIN3.y,WIN4.y,m),
+        ww=lerp(WIN3.w,WIN4.w,m)*breath,wh=lerp(WIN3.h,WIN4.h,m)*breath;
+  const cx=wx+ww/2,cy=wy+wh/2;
+  ctx.globalAlpha=alpha;ctx.strokeStyle=OCHRE;ctx.lineWidth=7;
+  roundRect(wx,wy,ww,wh,18);ctx.stroke();
+  ctx.save();roundRect(wx+8,wy+8,ww-16,wh-16,12);ctx.clip();
+  ctx.fillStyle='rgba(245,240,232,0.5)';ctx.fillRect(wx,wy,ww,wh);
+  const L=illuPts.length;
+  heroes.forEach((p,i)=>{
+    const tgt=illuPts[i%L];
+    const sx0=lerp(200,1700,p.r1),sy0=lerp(100,980,p.r2);
+    const e=eoc(clamp(u*(1.15+p.r3*0.35)-p.r3*0.3,0,1));
+    const nx=Noise.n3(p.r4*30,t*0.5,p.r6*30)*(1-e)*60+Noise.n3(p.r5*60,t*1.4,p.r7*60)*2.2*e;
+    const ny=Noise.n3(p.r6*30,t*0.5,p.r5*30)*(1-e)*60+Noise.n3(p.r7*60,t*1.4,p.r4*60)*2.2*e;
+    const x=lerp(sx0,tgt.x,e)+nx,y=lerp(sy0,tgt.y,e)+ny;
+    ctx.globalAlpha=alpha*(0.25+0.75*e);
+    ctx.fillStyle=`rgb(${tgt.c[0]},${tgt.c[1]},${tgt.c[2]})`;
+    const s=lerp(4,7,p.r5);
+    ctx.fillRect(x-s/2,y-s/2,s,s);
+  });
+  ctx.restore();ctx.globalAlpha=1;
+  return {cx,cy}; // 供 S5 使用
+}
+
+/* ---------- S5：爆点 —— 碎裂 → 粒子聚合成「把关」 ---------- */
+function drawClimax(t,alpha){
+  if(alpha<=0)return;
+  const breath=1+0.005*Math.sin(t*2.2);
+  const L=glyphPts.length;
+  const local=t-T_SHATTER;
+  // 冲击波 + 纸白闪光（17.378 精确触发）
+  if(local>0){
+    const wu=clamp(local/0.55,0,1);
+    ctx.globalAlpha=(1-wu)*0.5*alpha;ctx.strokeStyle=OCHRE;ctx.lineWidth=10*(1-wu)+2;
+    ctx.beginPath();ctx.arc(960,520,eoq(wu)*1500,0,7);ctx.stroke();
+    ctx.globalAlpha=Math.exp(-local*7)*0.8*alpha;ctx.fillStyle=PAPER;
+    ctx.fillRect(0,0,W,H);
+  }
+  // 窗口框碎片飞散
+  if(local>0){
+    const fu=eoq(clamp(local/0.7,0,1));
+    const edges=[[WIN4.x,WIN4.y,WIN4.x+WIN4.w,WIN4.y],[WIN4.x+WIN4.w,WIN4.y,WIN4.x+WIN4.w,WIN4.y+WIN4.h],
+                 [WIN4.x+WIN4.w,WIN4.y+WIN4.h,WIN4.x,WIN4.y+WIN4.h],[WIN4.x,WIN4.y+WIN4.h,WIN4.x,WIN4.y]];
+    edges.forEach((e,i)=>{
+      const mx=(e[0]+e[2])/2-960,my=(e[1]+e[3])/2-520,d=Math.hypot(mx,my)||1;
+      const ox=mx/d*fu*(420+i*90),oy=my/d*fu*(420+i*90);
+      ctx.save();ctx.globalAlpha=(1-fu)*alpha;ctx.strokeStyle=OCHRE;ctx.lineWidth=7;
+      ctx.translate(960+ox,520+oy);ctx.rotate(fu*(i%2?1:-1)*1.2);
+      ctx.beginPath();ctx.moveTo(e[0]-960,e[1]-520);ctx.lineTo(e[2]-960,e[3]-520);ctx.stroke();ctx.restore();
+    });
+  }
+  // 主体粒子：假象图景 → 径向爆炸 → 聚拢成字
+  const hold=ss(19.5,20.2,t); // 尾声淡出（接S6）
+  heroes.forEach((p,i)=>{
+    const g=glyphPts[i%L];
+    const ill=illuPts[i%illuPts.length];
+    const gx=ill.x,gy=ill.y;
+    let x,y,a=alpha*(1-hold),sz=7,spr=(p.r4<0.22)?SPR.ochre:SPR.ink;
+    if(local<=0){ // 图景保持（含16.3–17.35蓄力）
+      const e=1; // 已拼合
+      x=gx+Noise.n3(p.r5*60,t*1.4,p.r7*60)*2.2;
+      y=gy+Noise.n3(p.r7*60,t*1.4,p.r4*60)*2.2;
+      ctx.fillStyle=`rgb(${ill.c[0]},${ill.c[1]},${ill.c[2]})`;
+      ctx.globalAlpha=a;ctx.fillRect(x-3,y-3,6,6);return;
+    }
+    // 爆炸快照（确定性）
+    const dx=gx-960,dy=gy-520,d=Math.hypot(dx,dy)||1;
+    const ex=960+dx/d*(260+p.r3*620)+Noise.n3(p.r1*50,0,p.r6*50)*80;
+    const ey=520+dy/d*(260+p.r3*620)+Noise.n3(p.r2*50,0,p.r5*50)*80;
+    const gu=clamp((local-0.22)/1.15,0,1);
+    const gi=eoc(clamp(gu*(1.3+p.r5*0.4)-p.r5*0.3,0,1));
+    if(local<0.22){
+      const u=eoq(local/0.22);
+      x=lerp(gx,ex,u);y=lerp(gy,ey,u);
+    } else {
+      x=lerp(ex,g.x,gi)+Noise.n3(p.r6*70,t*2.2,p.r4*70)*2.4; // 字形边缘微抖
+      y=lerp(ey,g.y,gi)+Noise.n3(p.r4*70,t*2.2,p.r6*70)*2.4;
+      sz=lerp(5,9,p.r5);
+    }
+    // 尾声：粒子向上散开
+    x+=hold*Math.sin(p.r1*9)*140*hold;y-=hold*(160+p.r2*260);
+    a*=1-hold*0.6;
+    drawSpr(spr,x,y,sz,clamp(a,0,1));
+  });
+  // 实心字底衬（提升密度，淡入）
+  const ua=ss(18.0,18.6,t)*0.16*alpha*(1-hold);
+  if(ua>0.01){ctx.globalAlpha=ua;ctx.fillStyle=INK;
+    ctx.font='900 800px "Noto Serif SC",serif';ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillText('把关',960,520);}
+  ctx.globalAlpha=1;
+}
+
+/* ---------- S6：接收方视角 + 23.9s 次重拍（抬头 + 灰粒子光脉冲） ---------- */
+function drawReceiver(t,alpha){
+  if(alpha<=0)return;
+  // 漂浮窗口（假象图景的余影）
+  const bob=Math.sin(t*0.8)*8;
+  const wy=300+bob;
+  ctx.globalAlpha=alpha;ctx.strokeStyle=`rgba(181,81,45,0.75)`;ctx.lineWidth=5;
+  roundRect(730,wy,460,340,14);ctx.stroke();
+  ctx.save();roundRect(736,wy+6,448,328,10);ctx.clip();
+  const gl=ctx.createLinearGradient(0,wy,0,wy+340);
+  gl.addColorStop(0,'rgba(245,240,232,0.10)');gl.addColorStop(1,'rgba(46,64,87,0.18)');
+  ctx.fillStyle=gl;ctx.fillRect(730,wy,460,340);
+  // 余影：缩小的图景
+  ctx.globalAlpha=alpha*0.4;const L=illuPts.length;
+  for(let i=0;i<400;i++){const p=heroes[i],ill=illuPts[i%L];
+    const x=730+((ill.x-640)/640)*460,y=wy+((ill.y-220)/640)*340;
+    ctx.fillStyle=`rgb(${ill.c[0]},${ill.c[1]},${ill.c[2]})`;
+    ctx.globalAlpha=alpha*0.4*(0.5+0.5*Math.sin(t*1.5+i));
+    ctx.fillRect(x,y,2.5,2.5);}
+  ctx.restore();
+  // 窗外被挡住的灰粒子（密度在窗口边缘最高）
+  const pulse=t>23.9?Math.exp(-(t-23.9)*2.6):0;   // 23.9 光脉冲（单向衰减）
+  for(const p of grays){
+    const ang=p.r1*Math.PI*2;
+    const rr=lerp(60,760,Math.pow(p.r2,0.6));
+    const bx=960+Math.cos(ang)*rr*1.25, by=520+Math.sin(ang)*rr*0.72;
+    const x=bx+Noise.n3(p.r3*60,t*0.25,p.r6*60)*46+Math.sin(t*0.3+p.r4*9)*10;
+    const y=by+Noise.n3(p.r4*60,t*0.25,p.r5*60)*46;
+    const nearWin=(x>640&&x<1280&&y>240&&y<720)?0.25:1;
+    const a=alpha*(0.18+0.5*p.r5)*nearWin*(1+pulse*2.4);
+    drawSpr(SPR.gray,x,y,lerp(4,8,p.r6),clamp(a,0,0.95));
+  }
+  // 23.9 脉冲环
+  if(t>23.9){
+    const pu=clamp((t-23.9)/0.9,0,1);
+    ctx.globalAlpha=(1-pu)*0.5*alpha;ctx.strokeStyle='rgba(232,214,178,1)';ctx.lineWidth=4;
+    ctx.beginPath();ctx.arc(960,470,eoq(pu)*900,0,7);ctx.stroke();
+  }
+  // 观众剪影：A 低头 → B 抬头（23.3–23.9 完成，正好踩在次重拍）
+  const up=ss(23.3,23.9,t);
+  ctx.globalAlpha=alpha;
+  const drawSil=(pts,fillA)=>{
+    ctx.fillStyle=INK;ctx.globalAlpha=alpha*fillA;
+    ctx.beginPath();ctx.arc(lerp(966,962,up),lerp(716,628,up),lerp(64,62,up),0,7);ctx.fill();
+    ctx.beginPath();ctx.moveTo(742,1080);ctx.quadraticCurveTo(790,872,902,806);
+    ctx.quadraticCurveTo(988,762,1052,842);ctx.quadraticCurveTo(1120,928,1146,1080);ctx.closePath();ctx.fill();
+  };
+  drawSil(null,1-up*0.0); // 身体双色融合（圆心插值已表达低头→抬头）
+  // 抬头瞬间轮廓微光
+  if(up>0.01&&up<0.99||pulse>0.05){
+    ctx.globalAlpha=alpha*(Math.sin(up*Math.PI)*0.4+pulse*0.3);
+    ctx.strokeStyle='rgba(232,214,178,0.8)';ctx.lineWidth=2;
+    ctx.beginPath();ctx.arc(962,628,64,Math.PI*1.05,Math.PI*1.95);ctx.stroke();
+  }
+  // 头顶微光粒子（抬头时被点亮）
+  grays.slice(0,200).forEach((p,i)=>{
+    const tgt=(up<0.5?silSitAPts:silSitBPts)[i%silSitAPts.length];
+    const x=tgt.x+Noise.n3(p.r3*40,t,p.r5*40)*3,y=tgt.y+Noise.n3(p.r4*40,t,p.r6*40)*3;
+    drawSpr(SPR.glow,x,y,5,alpha*up*(0.3+0.7*p.r5));
+  });
+  ctx.globalAlpha=1;
+}
+
+/* ---------- S7：推门 → 灰色涌入重新点亮 ---------- */
+function drawOpening(t,alpha){
+  if(alpha<=0)return;
+  const open=ss(26.8,28.4,t);          // 窗扇开启角
+  const reach=ss(26.2,27.6,t);         // 伸手
+  const hingeX=730, hingeY=300+Math.sin(t*0.8)*8;
+  // 光先从门缝涌出
+  if(open>0.02){
+    ctx.save();ctx.globalAlpha=alpha*open*0.5;
+    const lg=ctx.createRadialGradient(hingeX,hingeY+170,20,hingeX,hingeY+170,760);
+    lg.addColorStop(0,'rgba(245,240,232,0.9)');lg.addColorStop(1,'rgba(245,240,232,0)');
+    ctx.fillStyle=lg;
+    ctx.beginPath();ctx.moveTo(hingeX,hingeY);
+    ctx.arc(hingeX,hingeY+170,760,-Math.PI/2+0.25,-0.25+open*0.9);ctx.closePath();ctx.fill();
+    ctx.restore();
+  }
+  // 窗框（绕左铰链旋开）
+  ctx.save();ctx.globalAlpha=alpha;ctx.translate(hingeX,hingeY+170);ctx.rotate(-open*1.15);
+  ctx.strokeStyle=OCHRE;ctx.lineWidth=5;
+  roundRect(0,-170,460,340,12);ctx.stroke();ctx.restore();
+  // 伸出的手臂
+  ctx.save();ctx.globalAlpha=alpha;ctx.strokeStyle=INK;ctx.lineCap='round';
+  ctx.lineWidth=44;ctx.beginPath();ctx.moveTo(905,860);
+  const hx=lerp(905,hingeX+40,reach),hy=lerp(860,hingeY+330,reach);
+  ctx.quadraticCurveTo(lerp(905,hx,0.5)+20,lerp(860,hy,0.5)-40*reach,hx,hy);ctx.stroke();
+  ctx.fillStyle=INK;ctx.beginPath();ctx.arc(hx,hy,26,0,7);ctx.fill();
+  ctx.restore();
+  // 灰粒子涌入 → 越界点亮为彩色
+  const flood=ss(26.6,29.2,t);
+  for(const p of grays){
+    const ang=p.r1*Math.PI*2, rr=lerp(60,760,Math.pow(p.r2,0.6));
+    const bx=960+Math.cos(ang)*rr*1.25,by=520+Math.sin(ang)*rr*0.72;
+    const drift=Noise.n3(p.r3*60,t*0.25,p.r6*60)*46;
+    const delay=p.r4*0.5;
+    const u=eoc(clamp((flood-delay)/(1-delay||1),0,1));
+    // 汇入中心开口
+    const tx=lerp(bx+drift,hingeX+120,u),ty=lerp(by+drift,hingeY+170,u*0.6);
+    const lit=ss(27.0,28.8,t)*(0.4+0.6*p.r6);     // 点亮程度
+    const spr=p.r5<lit?PAL[(p.r7*PAL.length)|0]:SPR.gray;
+    const sp=1+u*2.2;
+    const a=alpha*(0.22+0.55*p.r5)*(1-ss(29.2,30,t));
+    drawSpr(spr,tx*sp-(sp-1)*960,ty*sp-(sp-1)*540,lerp(4,9,p.r6)*(1+u),clamp(a,0,1));
+  }
+  ctx.globalAlpha=1;
+}
+
+/* ---------- 主渲染 ---------- */
+function render(t){
+  t=clamp(t,0,DUR-0.001);
+  ctx.clearRect(0,0,W,H);
+  drawBG(t);
+  // 场景包络（0.4s 交叠，禁止硬切）
+  const env=(a,b)=>Math.min(ss(a,a+0.4,t),1-ss(b-0.4,b,t));
+  drawTide(t,env(0,9.4));                    // 层A：潮汐+窗口
+  drawGatekeeper(t,env(4,15));               // S2 剪影（含8.6脉冲）
+  drawFiltering(t,env(9,15.2));              // S3 筛网
+  if(t<17.32) drawIllusion(t,env(14,17.32)); // S4 假象图景（碎裂前）
+  drawClimax(t,env(17,20.3));                // S5 爆点
+  drawReceiver(t,env(20,27));                // S6 接收方（含23.9脉冲）
+  drawOpening(t,env(26.2,30));               // S7 推门
+  // 收尾渐隐
+  const fade=ss(29.3,30,t);
+  if(fade>0){ctx.globalAlpha=fade;ctx.fillStyle=PAPER;ctx.fillRect(0,0,W,H);ctx.globalAlpha=1;}
+  drawSubtitles(t);
+  drawGrain(t);
+}
+
+/* ============================================================
+   播放
+   ============================================================ */
+const btnPlay=document.getElementById('btnPlay'), btnExport=document.getElementById('btnExport'),
+      timeEl=document.getElementById('time'), statusEl=document.getElementById('status');
+let audio=new Audio(), audioReady=false, playing=false, perfStart=0, stillMode=false;
+
+btnPlay.onclick=()=>{ playing?pause():play(); };
+function play(){
+  if(stillMode){stillMode=false;}
+  playing=true;btnPlay.textContent='暂 停';
+  if(audioReady){audio.currentTime=0;audio.play().catch(()=>{});}
+  perfStart=performance.now();
+  requestAnimationFrame(tick);
+}
+function pause(){
+  playing=false;btnPlay.textContent='播 放';
+  if(audioReady)audio.pause();
+}
+function tick(now){
+  if(!playing)return;
+  const t=audioReady?audio.currentTime:(now-perfStart)/1000;
+  if(t>=DUR){pause();render(DUR-0.001);timeEl.textContent=`${DUR.toFixed(2)} / 30.00 s`;return;}
+  render(t);
+  timeEl.textContent=`${t.toFixed(2)} / 30.00 s`;
+  requestAnimationFrame(tick);
+}
+function showStill(t){
+  pause();stillMode=true;render(t);
+  timeEl.textContent=`${t.toFixed(2)} / 30.00 s （定格）`;
+}
+
+/* BGM 载入 */
+const drop=document.getElementById('drop');
+drop.onclick=()=>{const i=document.createElement('input');i.type='file';i.accept='audio/mpeg,audio/*';
+  i.onchange=()=>i.files[0]&&loadAudio(i.files[0]);i.click();};
+drop.ondragover=e=>{e.preventDefault();drop.classList.add('over');};
+drop.ondragleave=()=>drop.classList.remove('over');
+drop.ondrop=e=>{e.preventDefault();drop.classList.remove('over');
+  const f=[...e.dataTransfer.files].find(f=>f.type.startsWith('audio'));if(f)loadAudio(f);};
+function loadAudio(f){
+  audio.src=URL.createObjectURL(f);audioReady=true;
+  drop.textContent=`♪ 已载入：${f.name}（播放时同步）`;
+}
+
+/* 质检定格 */
+const qc=document.getElementById('qc');
+[16.3,16.8,17.0,17.1,17.5,18.0,8.6,23.9].forEach(t=>{
+  const b=document.createElement('button');b.textContent=t.toFixed(1)+'s';
+  b.onclick=()=>showStill(t);qc.appendChild(b);
+});
+
+/* ============================================================
+   导出 MP4：逐帧渲染 + MediaRecorder（标签页保持前台）
+   ============================================================ */
+const MIME_CANDIDATES=['video/mp4;codecs="avc1.640028"','video/mp4',
+                       'video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'];
+function pickMime(){return MIME_CANDIDATES.find(m=>{try{return MediaRecorder.isTypeSupported(m);}catch(e){return false;}})||'';}
+
+btnExport.onclick=async()=>{
+  if(!ready)return;
+  pause();
+  const mime=pickMime();
+  if(!mime){statusEl.textContent='当前浏览器不支持 MediaRecorder，请使用 Chrome / Edge。';return;}
+  const isMp4=mime.includes('mp4');
+  btnExport.disabled=true;btnPlay.disabled=true;
+  statusEl.textContent=`逐帧渲染中…（0/${DUR*FPS}）请保持标签页在前台`;
+  const stream=canvas.captureStream(0);
+  const track=stream.getVideoTracks()[0];
+  const rec=new MediaRecorder(stream,{mimeType:mime,videoBitsPerSecond:24_000_000});
+  const chunks=[];
+  rec.ondataavailable=e=>e.data.size&&chunks.push(e.data);
+  const stopped=new Promise(r=>rec.onstop=r);
+  rec.start(250);
+  for(let f=0;f<DUR*FPS;f++){
+    render(f/FPS);
+    if(track.requestFrame)track.requestFrame();
+    if(f%15===0){statusEl.textContent=`逐帧渲染中…（${f}/${DUR*FPS}）请保持标签页在前台`;
+      await new Promise(r=>setTimeout(r,0));}
+    await new Promise(r=>requestAnimationFrame(r));
+  }
+  rec.stop();await stopped;
+  const blob=new Blob(chunks,{type:mime});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;a.download=isMp4?'gatekeeping-1920x1080-30fps.mp4':'gatekeeping-1920x1080-30fps.webm';
+  a.click();setTimeout(()=>URL.revokeObjectURL(url),5000);
+  statusEl.textContent=isMp4?`已导出 MP4（${(blob.size/1048576).toFixed(1)} MB）`
+    :`浏览器不支持 MP4 封装，已导出 WebM（${(blob.size/1048576).toFixed(1)} MB），请用 ffmpeg 合流转码`;
+  btnExport.disabled=false;btnPlay.disabled=false;
+  render(0);timeEl.textContent='0.00 / 30.00 s';
+};
+
+/* ============================================================
+   初始化：等字体 → 采样字形 → 就绪
+   ============================================================ */
+let ready=false;
+(async()=>{
+  try{
+    await Promise.all([
+      document.fonts.load('900 100px "Noto Serif SC"','把关'),
+      document.fonts.load('600 60px "Noto Serif SC"','门'),
+      document.fonts.load('italic 300 30px Inter','GATEKEEPING'),
+      document.fonts.ready,
+    ]);
+  }catch(e){ /* 离线时回落系统衬线 */ }
+  buildSamples();
+  ready=true;
+  btnPlay.disabled=false;btnExport.disabled=false;
+  statusEl.textContent='就绪。建议 Chrome / Edge。BGM 可拖入上方区域，播放时画面与音频同步。';
+  render(0);
+})();
+</script>
+</body>
+</html>

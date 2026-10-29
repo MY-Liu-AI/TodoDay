@@ -1,0 +1,719 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>概念原型 · 存钱计划 & 习惯养成</title>
+<style>
+  /* 与主应用同源的设计语言：青绿主操作 + 分类色板 + 浅色默认 */
+  :root {
+    --bg: #f6f8f8;
+    --panel: #fff;
+    --ink: #22302c;
+    --muted: #5f6f6a;
+    --faint: #93a29d;
+    --line: #e2e8e6;
+    --accent: oklch(0.49 0.085 185);
+    --accent-ink: #fff;
+    --accent-soft: #e4f2ef;
+    --sans: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    --mono: "SF Mono", "Cascadia Mono", Consolas, monospace;
+    --cyan: #25869c; --yellow: #978018; --peach: #b76b35;
+    --coral: #bc5c53; --teal: #358570; --slate: #7a8790;
+    --radius: 14px;
+    --shadow: 0 1px 2px rgba(30, 50, 45, 0.05), 0 8px 24px rgba(30, 50, 45, 0.06);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--sans); background: var(--bg); color: var(--ink); min-height: 100vh; }
+  button { font-family: inherit; cursor: pointer; }
+  input, select, textarea { font-family: inherit; font-size: 14px; color: var(--ink); }
+  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+  /* ── 顶栏 ─────────────────────────────── */
+  .topbar {
+    max-width: 1080px; margin: 0 auto; padding: 28px 24px 0;
+    display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  }
+  .topbar .overline { font-size: 11px; letter-spacing: 0.18em; color: var(--faint); font-weight: 600; }
+  .topbar h1 { font-size: 24px; font-weight: 700; margin-top: 4px; }
+  .tabs { display: flex; gap: 6px; background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 4px; }
+  .tabs button {
+    border: 0; background: transparent; padding: 8px 18px; border-radius: 999px;
+    font-size: 14px; font-weight: 500; color: var(--muted);
+  }
+  .tabs button.is-on { background: var(--accent); color: var(--accent-ink); }
+  .demo-note { max-width: 1080px; margin: 10px auto 0; padding: 0 24px; font-size: 12px; color: var(--faint); }
+
+  main { max-width: 1080px; margin: 0 auto; padding: 20px 24px 80px; }
+
+  /* ── 汇总条 ───────────────────────────── */
+  .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-bottom: 20px; }
+  .stat-card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; box-shadow: var(--shadow); }
+  .stat-card .k { font-size: 12px; color: var(--muted); }
+  .stat-card .v { font-size: 22px; font-weight: 700; margin-top: 6px; }
+  .stat-card .s { font-size: 12px; color: var(--faint); margin-top: 4px; }
+
+  /* ── 卡片网格 ─────────────────────────── */
+  .section-head { display: flex; align-items: center; justify-content: space-between; margin: 8px 0 14px; }
+  .section-head h2 { font-size: 17px; font-weight: 600; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 12px; }
+  .card-top { display: flex; align-items: flex-start; gap: 10px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 6px; flex: none; }
+  .card-title { font-size: 16px; font-weight: 600; }
+  .card-note { font-size: 12px; color: var(--faint); margin-top: 2px; }
+  .card-menu { margin-left: auto; display: flex; gap: 4px; }
+  .icon-btn { border: 0; background: transparent; color: var(--faint); font-size: 13px; padding: 4px 6px; border-radius: 6px; }
+  .icon-btn:hover { background: var(--bg); color: var(--ink); }
+
+  /* 存钱卡片 */
+  .amount-row { display: flex; align-items: baseline; gap: 8px; }
+  .amount-row .saved { font-size: 26px; font-weight: 700; }
+  .amount-row .target { font-size: 13px; color: var(--faint); }
+  .amount-row .pct { margin-left: auto; font-size: 13px; font-weight: 600; color: var(--accent); }
+  .progress { height: 8px; border-radius: 999px; background: var(--accent-soft); overflow: hidden; }
+  .progress > i { display: block; height: 100%; border-radius: 999px; background: var(--accent); transition: width 0.4s ease; }
+  .pace { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
+  .badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; }
+  .badge.ok { background: var(--accent-soft); color: var(--accent); }
+  .badge.warn { background: #fbf0d9; color: #8a6d1c; }
+  .badge.bad { background: #f9e3e1; color: #a2453d; }
+  .badge.done { background: var(--accent); color: var(--accent-ink); }
+  .minibars { display: flex; align-items: flex-end; gap: 6px; height: 44px; padding-top: 4px; border-top: 1px dashed var(--line); }
+  .minibar { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; height: 100%; justify-content: flex-end; }
+  .minibar i { width: 100%; max-width: 22px; border-radius: 4px 4px 2px 2px; background: var(--accent-soft); }
+  .minibar i.has { background: var(--accent); }
+  .minibar span { font-size: 10px; color: var(--faint); }
+
+  /* 习惯卡片 */
+  .habit-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .habit-stats div { background: var(--bg); border-radius: 10px; padding: 8px 6px; text-align: center; }
+  .habit-stats .n { font-size: 17px; font-weight: 700; }
+  .habit-stats .l { font-size: 10px; color: var(--faint); margin-top: 2px; }
+  .week-row { display: flex; gap: 6px; }
+  .day-chip {
+    flex: 1; border: 1px solid var(--line); background: var(--panel); border-radius: 10px;
+    padding: 7px 0 6px; text-align: center; transition: all 0.15s ease;
+  }
+  .day-chip .d { font-size: 10px; color: var(--faint); }
+  .day-chip .n { font-size: 13px; font-weight: 600; margin-top: 1px; }
+  .day-chip:hover { border-color: var(--accent); }
+  .day-chip.on { background: var(--accent); border-color: var(--accent); }
+  .day-chip.on .d, .day-chip.on .n { color: var(--accent-ink); }
+  .day-chip.today { box-shadow: 0 0 0 2px var(--accent-soft); }
+  .day-chip:disabled { opacity: 0.4; cursor: not-allowed; }
+  .heatmap { display: grid; grid-template-rows: repeat(7, 1fr); grid-auto-flow: column; gap: 3px; }
+  .hm-cell { width: 100%; aspect-ratio: 1; border-radius: 3px; background: var(--accent-soft); }
+  .hm-cell.on { background: var(--accent); }
+  .hm-cell.future { background: transparent; }
+  .milestones { display: flex; gap: 6px; flex-wrap: wrap; }
+  .ms { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--faint); }
+  .ms.got { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+
+  .card-actions { display: flex; gap: 8px; margin-top: auto; }
+  .btn { border: 0; border-radius: 10px; padding: 9px 14px; font-size: 13px; font-weight: 600; }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); flex: 1; }
+  .btn.ghost { background: transparent; border: 1px solid var(--line); color: var(--muted); }
+  .btn.danger { background: transparent; border: 1px solid var(--line); color: #a2453d; }
+  .btn:hover { filter: brightness(0.96); }
+
+  .empty { grid-column: 1 / -1; text-align: center; color: var(--faint); font-size: 14px; padding: 48px 0; border: 1px dashed var(--line); border-radius: var(--radius); }
+
+  /* ── 对话框 ───────────────────────────── */
+  dialog { border: 0; border-radius: 16px; padding: 0; width: min(420px, calc(100vw - 40px)); box-shadow: 0 24px 64px rgba(20, 40, 35, 0.25); }
+  dialog::backdrop { background: rgba(25, 35, 32, 0.35); }
+  .dlg-body { padding: 22px; }
+  .dlg-body h3 { font-size: 17px; font-weight: 700; margin-bottom: 16px; }
+  .field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+  .field input, .field select, .field textarea {
+    border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; background: var(--panel); outline: none;
+  }
+  .field input:focus, .field select:focus, .field textarea:focus { border-color: var(--accent); }
+  .field-row { display: flex; gap: 10px; }
+  .field-row .field { flex: 1; }
+  .swatches { display: flex; gap: 8px; }
+  .swatch { width: 26px; height: 26px; border-radius: 50%; border: 2px solid transparent; padding: 0; }
+  .swatch.is-on { border-color: var(--ink); }
+  .hint { font-size: 12px; color: var(--faint); }
+  .dlg-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+
+  /* 记录历史弹层 */
+  .entry-list { max-height: 260px; overflow: auto; display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+  .entry-row { display: flex; align-items: center; gap: 10px; font-size: 13px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; }
+  .entry-row .amt { font-weight: 700; margin-left: auto; }
+  .entry-row .del { border: 0; background: none; color: var(--faint); }
+  .entry-row .del:hover { color: #a2453d; }
+
+  .footer-actions { display: flex; justify-content: center; margin-top: 32px; }
+  .footer-actions button { border: 0; background: none; color: var(--faint); font-size: 12px; text-decoration: underline; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div>
+    <div class="overline">CONCEPT PROTOTYPE</div>
+    <h1>存钱计划 · 习惯养成</h1>
+  </div>
+  <nav class="tabs" aria-label="功能切换">
+    <button id="tab-savings" class="is-on" onclick="switchTab('savings')">存钱计划</button>
+    <button id="tab-habits" onclick="switchTab('habits')">习惯养成</button>
+  </nav>
+</header>
+<p class="demo-note">概念原型：数据只存在本浏览器 localStorage，与主应用账户体系无关；视觉上沿用产品的青绿主色与分类色板。</p>
+
+<main>
+  <!-- ═══ 存钱计划 ═══ -->
+  <section id="view-savings">
+    <div class="summary" id="savings-summary"></div>
+    <div class="section-head">
+      <h2>我的存钱目标</h2>
+      <button class="btn primary" style="flex:none" onclick="openGoalDialog()">+ 新建存钱目标</button>
+    </div>
+    <div class="cards" id="savings-cards"></div>
+  </section>
+
+  <!-- ═══ 习惯养成 ═══ -->
+  <section id="view-habits" hidden>
+    <div class="summary" id="habits-summary"></div>
+    <div class="section-head">
+      <h2>我的每日习惯</h2>
+      <button class="btn primary" style="flex:none" onclick="openHabitDialog()">+ 新建习惯</button>
+    </div>
+    <div class="cards" id="habit-cards"></div>
+  </section>
+
+  <div class="footer-actions">
+    <button onclick="resetDemo()">重置演示数据</button>
+  </div>
+</main>
+
+<!-- 存钱目标对话框 -->
+<dialog id="goal-dialog">
+  <div class="dlg-body">
+    <h3 id="goal-dialog-title">新建存钱目标</h3>
+    <label class="field">目标名称
+      <input id="g-name" maxlength="30" placeholder="例如：日本旅行基金" />
+    </label>
+    <div class="field-row">
+      <label class="field">目标金额（¥）
+        <input id="g-target" type="number" min="1" step="100" placeholder="20000" />
+      </label>
+      <label class="field">起始已存（¥，可空）
+        <input id="g-base" type="number" min="0" step="100" placeholder="0" />
+      </label>
+    </div>
+    <label class="field">计划方式
+      <select id="g-mode" onchange="renderGoalModeFields()">
+        <option value="monthly">按月定额 —— 我每月能存多少</option>
+        <option value="deadline">按期达成 —— 我想什么时候存够</option>
+      </select>
+    </label>
+    <label class="field" id="g-monthly-wrap">每月存入（¥）
+      <input id="g-monthly" type="number" min="1" step="100" placeholder="2000" />
+    </label>
+    <label class="field" id="g-deadline-wrap" hidden>截止月份
+      <input id="g-deadline" type="month" />
+    </label>
+    <p class="hint" id="g-plan-hint"></p>
+    <label class="field">分类色
+      <div class="swatches" id="g-swatches"></div>
+    </label>
+    <label class="field">备注（可空）
+      <textarea id="g-note" rows="2" maxlength="120" placeholder="为什么存这笔钱？"></textarea>
+    </label>
+    <p class="hint" id="g-error" style="color:#a2453d"></p>
+    <div class="dlg-actions">
+      <button class="btn ghost" onclick="closeDialog('goal-dialog')">取消</button>
+      <button class="btn primary" onclick="saveGoal()">保存</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- 记进度对话框 -->
+<dialog id="entry-dialog">
+  <div class="dlg-body">
+    <h3 id="entry-dialog-title">记录进度</h3>
+    <div class="field-row">
+      <label class="field">月份
+        <input id="e-month" type="month" />
+      </label>
+      <label class="field">存入金额（¥）
+        <input id="e-amount" type="number" min="1" step="50" placeholder="2000" />
+      </label>
+    </div>
+    <label class="field">备注（可空）
+      <input id="e-note" maxlength="60" placeholder="例如：年终奖入账" />
+    </label>
+    <p class="hint">同一月份可以记多笔，进度按月份汇总。</p>
+    <p class="hint" id="e-error" style="color:#a2453d"></p>
+    <div class="dlg-actions">
+      <button class="btn ghost" onclick="closeDialog('entry-dialog')">取消</button>
+      <button class="btn primary" onclick="saveEntry()">保存</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- 记录历史对话框 -->
+<dialog id="history-dialog">
+  <div class="dlg-body">
+    <h3 id="history-dialog-title">存入记录</h3>
+    <div class="entry-list" id="history-list"></div>
+    <div class="dlg-actions">
+      <button class="btn ghost" onclick="closeDialog('history-dialog')">关闭</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- 习惯对话框 -->
+<dialog id="habit-dialog">
+  <div class="dlg-body">
+    <h3 id="habit-dialog-title">新建习惯</h3>
+    <label class="field">习惯名称
+      <input id="h-name" maxlength="30" placeholder="例如：每天阅读 30 分钟" />
+    </label>
+    <div class="field-row">
+      <label class="field">里程碑目标（连续天数）
+        <input id="h-target" type="number" min="3" max="365" value="21" />
+      </label>
+      <label class="field">分类色
+        <div class="swatches" id="h-swatches" style="align-items:flex-end;padding-bottom:8px"></div>
+      </label>
+    </div>
+    <label class="field">备注（可空）
+      <textarea id="h-note" rows="2" maxlength="120" placeholder=" trigger / 场景提示，例如：睡前把手机放在客厅"></textarea>
+    </label>
+    <p class="hint" id="h-error" style="color:#a2453d"></p>
+    <div class="dlg-actions">
+      <button class="btn ghost" onclick="closeDialog('habit-dialog')">取消</button>
+      <button class="btn primary" onclick="saveHabit()">保存</button>
+    </div>
+  </div>
+</dialog>
+
+<script>
+/* ═══════════════════════ 基础工具 ═══════════════════════ */
+const MS_DAY = 86400000;
+const COLORS = ["cyan", "yellow", "peach", "coral", "teal", "slate"];
+const COLOR_HEX = { cyan: "#25869c", yellow: "#978018", peach: "#b76b35", coral: "#bc5c53", teal: "#358570", slate: "#7a8790" };
+const pad = (n) => String(n).padStart(2, "0");
+const dstr = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const mstr = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+const parseM = (s) => { const [y, m] = s.split("-").map(Number); return new Date(y, m - 1, 1); };
+const addMonths = (d, n) => new Date(d.getFullYear(), d.getMonth() + n, 1);
+const monthDiff = (a, b) => (b.getFullYear() - a.getFullYear()) * 12 + (b.getMonth() - a.getMonth());
+const money = (n) => "¥" + Math.round(n).toLocaleString("zh-CN");
+const today = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; };
+const todayStr = () => dstr(today());
+const thisMonthStr = () => mstr(today());
+const uid = () => Math.random().toString(36).slice(2, 10);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+/* ═══════════════════════ 演示数据（localStorage） ═══════════════════════ */
+const LS_KEY = "demo-savings-habits-v1";
+let state = load();
+
+function load() {
+  try { const raw = localStorage.getItem(LS_KEY); if (raw) return JSON.parse(raw); } catch {}
+  return seed();
+}
+function persist() { try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch {} }
+function resetDemo() { state = seed(); persist(); render(); }
+
+function seed() {
+  const now = today();
+  const ago = (n) => new Date(now.getTime() - n * MS_DAY);
+  const monthAgo = (n) => mstr(addMonths(now, -n));
+  // 习惯打卡：生成过去 N 天里的打卡集合（带几个断点，让连续天数有故事）
+  const checkins = {};
+  const mk = (habitId, days) => { checkins[habitId] = days.map((n) => dstr(ago(n))); };
+  const h1 = uid(), h2 = uid(), h3 = uid();
+  mk(h1, [0, 1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17, 19, 20, 21]); // 早起：断在最近第 5 天 → 连续 5
+  mk(h2, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]); // 阅读：连续 13
+  mk(h3, [0, 1, 3, 4, 6]); // 冥想：连续 2
+  const entries = [];
+  const mkEntries = (goalId, pairs) => pairs.forEach(([m, amount, note]) => entries.push({ id: uid(), goalId, month: m, amount, note: note || "", at: m + "-05" }));
+  const g1 = uid(), g2 = uid(), g3 = uid();
+  mkEntries(g1, [[monthAgo(5), 1500], [monthAgo(4), 2000], [monthAgo(3), 1800], [monthAgo(2), 2200], [monthAgo(1), 2000], [thisMonthStr(), 1500, "本月已存"]]);
+  mkEntries(g2, [[monthAgo(5), 2500], [monthAgo(4), 3000], [monthAgo(3), 3000], [monthAgo(2), 2800], [monthAgo(1), 3000], [thisMonthStr(), 3000, "工资日自动转存"]]);
+  mkEntries(g3, [[monthAgo(3), 1000], [monthAgo(2), 1500], [monthAgo(1), 1500], [thisMonthStr(), 2000, "接了一个外包小活"]]);
+  return {
+    goals: [
+      { id: g1, name: "日本旅行基金", target: 20000, base: 2000, mode: "deadline", deadline: mstr(addMonths(now, 5)), color: "cyan", note: "明年樱花季，东京 + 京都", createdAt: monthAgo(5) },
+      { id: g2, name: "应急备用金", target: 50000, base: 6000, mode: "monthly", monthly: 3000, color: "teal", note: "6 个月生活费，不动用", createdAt: monthAgo(5) },
+      { id: g3, name: "换新电脑", target: 12000, base: 0, mode: "deadline", deadline: mstr(addMonths(now, 2)), color: "peach", note: "M 系列芯片，剪辑用", createdAt: monthAgo(3) },
+    ],
+    entries,
+    habits: [
+      { id: h1, name: "早起（6:30 前起床）", note: "闹钟放客厅，响就必须下床", color: "cyan", target: 21, createdAt: dstr(ago(24)) },
+      { id: h2, name: "阅读 30 分钟", note: "通勤地铁上读，kindle 随身带", color: "teal", target: 30, createdAt: dstr(ago(26)) },
+      { id: h3, name: "冥想 10 分钟", note: "睡前用 App 引导", color: "violet" in COLOR_HEX ? "violet" : "coral", target: 7, createdAt: dstr(ago(8)) },
+    ],
+    checkins,
+  };
+}
+
+/* ═══════════════════════ Tab 切换 ═══════════════════════ */
+function switchTab(tab) {
+  document.getElementById("view-savings").hidden = tab !== "savings";
+  document.getElementById("view-habits").hidden = tab !== "habits";
+  document.getElementById("tab-savings").classList.toggle("is-on", tab === "savings");
+  document.getElementById("tab-habits").classList.toggle("is-on", tab === "habits");
+}
+
+/* ═══════════════════════ 存钱计划 ═══════════════════════ */
+function goalSaved(g) { return g.base + state.entries.filter((e) => e.goalId === g.id).reduce((s, e) => s + e.amount, 0); }
+function goalEntriesOf(g) { return state.entries.filter((e) => e.goalId === g.id).sort((a, b) => (a.month < b.month ? 1 : -1)); }
+
+/* 计划推导：月均需存 / 预计达成月 */
+function goalPlan(g) {
+  const saved = goalSaved(g);
+  const remaining = Math.max(0, g.target - saved);
+  const nowFirst = new Date(today().getFullYear(), today().getMonth(), 1);
+  if (g.mode === "monthly") {
+    const monthsNeeded = Math.max(1, Math.ceil((g.target - g.base) / g.monthly));
+    const finish = addMonths(parseM(g.createdAt), monthsNeeded - 1);
+    return { need: g.monthly, finish, monthsLeft: null };
+  }
+  const monthsLeft = monthDiff(nowFirst, parseM(g.deadline)) + 1;
+  if (remaining <= 0) return { need: 0, finish: parseM(g.deadline), monthsLeft };
+  if (monthsLeft <= 0) return { need: remaining, finish: parseM(g.deadline), monthsLeft };
+  return { need: Math.ceil(remaining / monthsLeft), finish: parseM(g.deadline), monthsLeft };
+}
+
+/* 近 6 个完整月（不含本月）的实际月均存入 */
+function avgMonthly(g) {
+  const now = today();
+  const sums = [];
+  for (let i = 6; i >= 1; i--) sums.push(state.entries.filter((e) => e.goalId === g.id && e.month === mstr(addMonths(now, -i))).reduce((s, e) => s + e.amount, 0));
+  return sums.reduce((s, v) => s + v, 0) / 6;
+}
+
+function goalStatus(g) {
+  const saved = goalSaved(g);
+  if (saved >= g.target) return { cls: "done", text: "已达成 🎉" };
+  const plan = goalPlan(g);
+  if (g.mode === "deadline" && plan.monthsLeft !== null && plan.monthsLeft <= 0) return { cls: "bad", text: "已到期，还差 " + money(g.target - saved) };
+  const avg = avgMonthly(g);
+  if (avg <= 0) return { cls: "warn", text: "还没有存入记录" };
+  if (avg >= plan.need) return { cls: "ok", text: `进度正常 · 月均存入 ${money(avg)}` };
+  return { cls: "bad", text: `落后 · 月均 ${money(avg)}，需 ${money(plan.need)}/月` };
+}
+
+function renderSavings() {
+  // 汇总
+  const goals = state.goals;
+  const totalSaved = goals.reduce((s, g) => s + goalSaved(g), 0);
+  const totalTarget = goals.reduce((s, g) => s + g.target, 0);
+  const active = goals.filter((g) => goalSaved(g) < g.target);
+  const earliest = active.map((g) => goalPlan(g).finish).sort((a, b) => a - b)[0];
+  document.getElementById("savings-summary").innerHTML = [
+    ["累计已存", money(totalSaved), "所有目标合计"],
+    ["目标总额", money(totalTarget), totalTarget ? `总进度 ${Math.round((totalSaved / totalTarget) * 100)}%` : "—"],
+    ["进行中目标", active.length + " 个", goals.length ? `共 ${goals.length} 个` : "—"],
+    ["预计最早达成", earliest ? `${earliest.getFullYear()} 年 ${earliest.getMonth() + 1} 月` : "—", "按当前计划推算"],
+  ].map(([k, v, s]) => `<div class="stat-card"><div class="k">${k}</div><div class="v num">${v}</div><div class="s">${s}</div></div>`).join("");
+
+  // 卡片
+  const wrap = document.getElementById("savings-cards");
+  if (!goals.length) { wrap.innerHTML = `<div class="empty">还没有存钱目标，点右上角「新建存钱目标」开始吧。</div>`; return; }
+  wrap.innerHTML = goals.map((g) => {
+    const saved = goalSaved(g);
+    const pct = Math.min(100, Math.round((saved / g.target) * 100));
+    const plan = goalPlan(g);
+    const status = goalStatus(g);
+    const now = today();
+    const bars = [];
+    for (let i = 5; i >= 0; i--) {
+      const m = mstr(addMonths(now, -i));
+      const sum = state.entries.filter((e) => e.goalId === g.id && e.month === m).reduce((s, e) => s + e.amount, 0);
+      const maxSum = Math.max(1, ...[0, 1, 2, 3, 4, 5].map((j) => state.entries.filter((e) => e.goalId === g.id && e.month === mstr(addMonths(now, -j))).reduce((s, e) => s + e.amount, 0)));
+      const label = m === thisMonthStr() ? "本月" : `${parseInt(m.slice(5))}月`;
+      bars.push(`<div class="minibar" title="${m}：${money(sum)}"><i class="${sum ? "has" : ""}" style="height:${sum ? Math.max(12, Math.round((sum / maxSum) * 100)) : 4}%"></i><span>${label}</span></div>`);
+    }
+    const planText = g.mode === "monthly"
+      ? `每月定额 ${money(g.monthly)} · 预计 ${plan.finish.getFullYear()}-${pad(plan.finish.getMonth() + 1)} 达成`
+      : `截止 ${g.deadline} · 月均需存 ${money(plan.need)}`;
+    return `<article class="card">
+      <div class="card-top">
+        <span class="dot" style="background:${COLOR_HEX[g.color] || COLOR_HEX.slate}"></span>
+        <div><div class="card-title">${esc(g.name)}</div>${g.note ? `<div class="card-note">${esc(g.note)}</div>` : ""}</div>
+        <div class="card-menu">
+          <button class="icon-btn" title="编辑" onclick="openGoalDialog('${g.id}')">✎</button>
+          <button class="icon-btn" title="删除" onclick="deleteGoal('${g.id}')">✕</button>
+        </div>
+      </div>
+      <div class="amount-row">
+        <span class="saved num">${money(saved)}</span>
+        <span class="target num">/ ${money(g.target)}</span>
+        <span class="pct num">${pct}%</span>
+      </div>
+      <div class="progress"><i style="width:${pct}%"></i></div>
+      <div class="pace"><span class="badge ${status.cls}">${status.text}</span></div>
+      <div class="pace">${planText}</div>
+      <div class="minibars">${bars.join("")}</div>
+      <div class="card-actions">
+        <button class="btn primary" onclick="openEntryDialog('${g.id}')">记一笔进度</button>
+        <button class="btn ghost" onclick="openHistory('${g.id}')">记录</button>
+      </div>
+    </article>`;
+  }).join("");
+}
+
+/* ── 目标新增 / 编辑 ── */
+let editingGoalId = null;
+let goalColor = "cyan";
+function renderSwatches(elId, current, onPick) {
+  document.getElementById(elId).innerHTML = COLORS.map((c) =>
+    `<button class="swatch ${c === current ? "is-on" : ""}" style="background:${COLOR_HEX[c]}" aria-label="${c}" onclick="${onPick}('${c}')"></button>`).join("");
+}
+function pickGoalColor(c) { goalColor = c; renderSwatches("g-swatches", c, "pickGoalColor"); }
+function renderGoalModeFields() {
+  const mode = document.getElementById("g-mode").value;
+  document.getElementById("g-monthly-wrap").hidden = mode !== "monthly";
+  document.getElementById("g-deadline-wrap").hidden = mode !== "deadline";
+  updatePlanHint();
+}
+function updatePlanHint() {
+  const hint = document.getElementById("g-plan-hint");
+  const mode = document.getElementById("g-mode").value;
+  const target = Number(document.getElementById("g-target").value) || 0;
+  const base = Number(document.getElementById("g-base").value) || 0;
+  if (mode === "monthly") {
+    const monthly = Number(document.getElementById("g-monthly").value) || 0;
+    if (target > base && monthly > 0) {
+      const months = Math.ceil((target - base) / monthly);
+      const finish = addMonths(parseM(thisMonthStr()), months - 1);
+      hint.textContent = `按每月 ${money(monthly)} 推算，${months} 个月后可达成（预计 ${finish.getFullYear()}-${pad(finish.getMonth() + 1)}）。`;
+    } else hint.textContent = "填好目标金额与每月定额后，这里会自动推算达成时间。";
+  } else {
+    const deadline = document.getElementById("g-deadline").value;
+    if (target > base && deadline) {
+      const monthsLeft = monthDiff(new Date(today().getFullYear(), today().getMonth(), 1), parseM(deadline)) + 1;
+      if (monthsLeft <= 0) hint.textContent = "截止月份早于当前月份，请重新选择。";
+      else hint.textContent = `距离截止还有 ${monthsLeft} 个月，每月需存约 ${money(Math.ceil((target - base) / monthsLeft))}。`;
+    } else hint.textContent = "填好目标金额与截止月份后，这里会自动推算每月需存金额。";
+  }
+}
+function openGoalDialog(id) {
+  editingGoalId = id || null;
+  const g = id ? state.goals.find((x) => x.id === id) : null;
+  document.getElementById("goal-dialog-title").textContent = g ? "编辑存钱目标" : "新建存钱目标";
+  document.getElementById("g-name").value = g?.name || "";
+  document.getElementById("g-target").value = g?.target || "";
+  document.getElementById("g-base").value = g?.base || "";
+  document.getElementById("g-mode").value = g?.mode || "monthly";
+  document.getElementById("g-monthly").value = g?.monthly || "";
+  document.getElementById("g-deadline").value = g?.deadline || mstr(addMonths(today(), 6));
+  document.getElementById("g-note").value = g?.note || "";
+  document.getElementById("g-error").textContent = "";
+  goalColor = g?.color || "cyan";
+  renderSwatches("g-swatches", goalColor, "pickGoalColor");
+  renderGoalModeFields();
+  showDialog("goal-dialog");
+}
+function saveGoal() {
+  const name = document.getElementById("g-name").value.trim();
+  const target = Number(document.getElementById("g-target").value);
+  const base = Math.max(0, Number(document.getElementById("g-base").value) || 0);
+  const mode = document.getElementById("g-mode").value;
+  const monthly = Number(document.getElementById("g-monthly").value);
+  const deadline = document.getElementById("g-deadline").value;
+  const err = document.getElementById("g-error");
+  if (!name) { err.textContent = "请填写目标名称。"; return; }
+  if (!target || target <= 0) { err.textContent = "请填写有效的目标金额。"; return; }
+  if (base >= target) { err.textContent = "起始已存不能大于等于目标金额。"; return; }
+  if (mode === "monthly" && (!monthly || monthly <= 0)) { err.textContent = "请填写每月定额。"; return; }
+  if (mode === "deadline" && !deadline) { err.textContent = "请选择截止月份。"; return; }
+  const payload = { name, target, base, mode, note: document.getElementById("g-note").value.trim(), color: goalColor };
+  if (mode === "monthly") payload.monthly = monthly; else payload.deadline = deadline;
+  if (editingGoalId) Object.assign(state.goals.find((x) => x.id === editingGoalId), payload);
+  else state.goals.push({ id: uid(), createdAt: thisMonthStr(), ...payload });
+  persist(); closeDialog("goal-dialog"); render();
+}
+function deleteGoal(id) {
+  const g = state.goals.find((x) => x.id === id);
+  if (!confirm(`删除「${g.name}」？存入记录会一并删除。`)) return;
+  state.goals = state.goals.filter((x) => x.id !== id);
+  state.entries = state.entries.filter((e) => e.goalId !== id);
+  persist(); render();
+}
+
+/* ── 记进度 / 历史 ── */
+let entryGoalId = null;
+function openEntryDialog(goalId) {
+  entryGoalId = goalId;
+  const g = state.goals.find((x) => x.id === goalId);
+  document.getElementById("entry-dialog-title").textContent = `记一笔 · ${g.name}`;  document.getElementById("e-month").value = thisMonthStr();
+  document.getElementById("e-month").max = thisMonthStr();
+  document.getElementById("e-amount").value = "";
+  document.getElementById("e-note").value = "";
+  document.getElementById("e-error").textContent = "";
+  showDialog("entry-dialog");
+}
+function saveEntry() {
+  const month = document.getElementById("e-month").value;
+  const amount = Number(document.getElementById("e-amount").value);
+  const err = document.getElementById("e-error");
+  if (!month) { err.textContent = "请选择月份。"; return; }
+  if (!amount || amount <= 0) { err.textContent = "请填写有效金额。"; return; }
+  state.entries.push({ id: uid(), goalId: entryGoalId, month, amount, note: document.getElementById("e-note").value.trim(), at: todayStr() });
+  persist(); closeDialog("entry-dialog"); render();
+}
+function openHistory(goalId) {
+  const g = state.goals.find((x) => x.id === goalId);
+  document.getElementById("history-dialog-title").textContent = `存入记录 · ${g.name}`;
+  const list = goalEntriesOf(g);
+  document.getElementById("history-list").innerHTML = list.length
+    ? list.map((e) => `<div class="entry-row"><span class="num">${e.month}</span><span style="color:var(--faint)">${esc(e.note) || "—"}</span><span class="amt num">+ ${money(e.amount)}</span><button class="del" title="删除" onclick="deleteEntry('${e.id}')">✕</button></div>`).join("")
+    : `<p class="hint" style="text-align:center;padding:24px 0">还没有记录，点「记一笔进度」开始。</p>`;
+  showDialog("history-dialog");
+}
+function deleteEntry(id) {
+  state.entries = state.entries.filter((e) => e.id !== id);
+  persist(); closeDialog("history-dialog"); render();
+}
+
+/* ═══════════════════════ 习惯养成 ═══════════════════════ */
+function datesOf(habitId) { return new Set(state.checkins[habitId] || []); }
+
+function streakOf(habitId) {
+  const set = datesOf(habitId);
+  let cursor = today();
+  if (!set.has(dstr(cursor))) cursor = new Date(cursor.getTime() - MS_DAY);
+  let n = 0;
+  while (set.has(dstr(cursor))) { n++; cursor = new Date(cursor.getTime() - MS_DAY); }
+  return n;
+}
+function longestStreakOf(habitId) {
+  const days = [...datesOf(habitId)].sort();
+  let best = 0, run = 0, prev = null;
+  for (const d of days) {
+    run = prev && (new Date(d) - new Date(prev)) === MS_DAY ? run + 1 : 1;
+    best = Math.max(best, run); prev = d;
+  }
+  return best;
+}
+function monthRateOf(habitId) {
+  const set = datesOf(habitId);
+  const now = today();
+  const prefix = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-`;
+  const checked = [...set].filter((d) => d.startsWith(prefix)).length;
+  const elapsed = now.getDate();
+  return { checked, elapsed, pct: Math.round((checked / elapsed) * 100) };
+}
+
+function renderHabits() {
+  const habits = state.habits;
+  const t = todayStr();
+  const doneToday = habits.filter((h) => datesOf(h.id).has(t)).length;
+  document.getElementById("habits-summary").innerHTML = [
+    ["今日打卡", `${doneToday} / ${habits.length}`, habits.length ? (doneToday === habits.length ? "全部完成，好状态！" : "继续加油") : "—"],
+    ["累计打卡", habits.reduce((s, h) => s + datesOf(h.id).size, 0) + " 次", "所有习惯合计"],
+    ["最长连续", Math.max(0, ...habits.map((h) => longestStreakOf(h.id))) + " 天", "单个习惯最佳纪录"],
+    ["习惯总数", habits.length + " 个", "每日习惯"],
+  ].map(([k, v, s]) => `<div class="stat-card"><div class="k">${k}</div><div class="v num">${v}</div><div class="s">${s}</div></div>`).join("");
+
+  const wrap = document.getElementById("habit-cards");
+  if (!habits.length) { wrap.innerHTML = `<div class="empty">还没有习惯，点右上角「新建习惯」开始打卡。</div>`; return; }
+  const now = today();
+  const WEEK_CN = ["日", "一", "二", "三", "四", "五", "六"];
+  wrap.innerHTML = habits.map((h) => {
+    const set = datesOf(h.id);
+    const streak = streakOf(h.id);
+    const longest = longestStreakOf(h.id);
+    const rate = monthRateOf(h.id);
+    // 近 7 天
+    const chips = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(now.getTime() - i * MS_DAY);
+      const ds = dstr(d);
+      const on = set.has(ds);
+      chips.push(`<button class="day-chip ${on ? "on" : ""} ${i === 0 ? "today" : ""}" ${ds > t ? "disabled" : ""} title="${ds}${on ? "（已打卡，点击取消）" : "（点击打卡）"}" onclick="toggleCheckin('${h.id}', '${ds}')">
+        <div class="d">周${WEEK_CN[d.getDay()]}</div><div class="n">${d.getDate()}</div></button>`);
+    }
+    // 热力图：最近 10 周（从本周往前，周一对齐）
+    const cells = [];
+    const monday = new Date(now.getTime() - ((now.getDay() + 6) % 7) * MS_DAY);
+    for (let w = 9; w >= 0; w--) {
+      for (let k = 0; k < 7; k++) {
+        const d = new Date(monday.getTime() - w * 7 * MS_DAY + k * MS_DAY);
+        const ds = dstr(d);
+        if (ds > t) cells.push(`<span class="hm-cell future"></span>`);
+        else cells.push(`<span class="hm-cell ${set.has(ds) ? "on" : ""}" title="${ds}"></span>`);
+      }
+    }
+    const msList = [7, 14, 30, 60, 100].filter((n) => n <= (h.target || 21) * 2 || n === 7 || n === 30 || n === 100).slice(0, 4);
+    return `<article class="card">
+      <div class="card-top">
+        <span class="dot" style="background:${COLOR_HEX[h.color] || COLOR_HEX.slate}"></span>
+        <div><div class="card-title">${esc(h.name)}</div>${h.note ? `<div class="card-note">${esc(h.note)}</div>` : ""}</div>
+        <div class="card-menu">
+          <button class="icon-btn" title="编辑" onclick="openHabitDialog('${h.id}')">✎</button>
+          <button class="icon-btn" title="删除" onclick="deleteHabit('${h.id}')">✕</button>
+        </div>
+      </div>
+      <div class="habit-stats">
+        <div><div class="n num">🔥 ${streak}</div><div class="l">当前连续</div></div>
+        <div><div class="n num">${longest}</div><div class="l">最长连续</div></div>
+        <div><div class="n num">${set.size}</div><div class="l">累计打卡</div></div>
+        <div><div class="n num">${rate.pct}%</div><div class="l">本月达成</div></div>
+      </div>
+      <div class="week-row">${chips.join("")}</div>
+      <div class="heatmap">${cells.join("")}</div>
+      <div class="milestones">${msList.map((n) => `<span class="ms ${longest >= n ? "got" : ""}">${n} 天</span>`).join("")}<span class="ms ${longest >= h.target ? "got" : ""}" style="border-style:dashed">目标 ${h.target} 天</span></div>
+    </article>`;
+  }).join("");
+}
+
+/* ── 习惯新增 / 编辑 / 打卡 ── */
+let editingHabitId = null;
+let habitColor = "teal";
+function pickHabitColor(c) { habitColor = c; renderSwatches("h-swatches", c, "pickHabitColor"); }
+function openHabitDialog(id) {
+  editingHabitId = id || null;
+  const h = id ? state.habits.find((x) => x.id === id) : null;
+  document.getElementById("habit-dialog-title").textContent = h ? "编辑习惯" : "新建习惯";
+  document.getElementById("h-name").value = h?.name || "";
+  document.getElementById("h-target").value = h?.target || 21;
+  document.getElementById("h-note").value = h?.note || "";
+  document.getElementById("h-error").textContent = "";
+  habitColor = h?.color || "teal";
+  renderSwatches("h-swatches", habitColor, "pickHabitColor");
+  showDialog("habit-dialog");
+}
+function saveHabit() {
+  const name = document.getElementById("h-name").value.trim();
+  const target = Math.max(3, Number(document.getElementById("h-target").value) || 21);
+  const err = document.getElementById("h-error");
+  if (!name) { err.textContent = "请填写习惯名称。"; return; }
+  const payload = { name, target, note: document.getElementById("h-note").value.trim(), color: habitColor };
+  if (editingHabitId) Object.assign(state.habits.find((x) => x.id === editingHabitId), payload);
+  else { const id = uid(); state.habits.push({ id, createdAt: todayStr(), ...payload }); state.checkins[id] = []; }
+  persist(); closeDialog("habit-dialog"); render();
+}
+function deleteHabit(id) {
+  const h = state.habits.find((x) => x.id === id);
+  if (!confirm(`删除「${h.name}」？打卡记录会一并删除。`)) return;
+  state.habits = state.habits.filter((x) => x.id !== id);
+  delete state.checkins[id];
+  persist(); render();
+}
+function toggleCheckin(habitId, date) {
+  const set = datesOf(habitId);
+  if (set.has(date)) set.delete(date); else set.add(date);
+  state.checkins[habitId] = [...set];
+  persist(); render();
+}
+
+/* ═══════════════════════ 通用 ═══════════════════════ */
+function showDialog(id) { const d = document.getElementById(id); if (!d.open) d.showModal(); }
+function closeDialog(id) { document.getElementById(id).close(); }
+function render() { renderSavings(); renderHabits(); }
+["g-target", "g-base", "g-monthly", "g-deadline"].forEach((id) =>
+  document.getElementById(id).addEventListener("input", updatePlanHint));
+render();
+</script>
+</body>
+</html>

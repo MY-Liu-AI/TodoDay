@@ -48,15 +48,13 @@ test("secrets never touch localStorage", () => {
 
 test("settings view uses password inputs and never prefills secrets", () => {
   const pwInputs = view.match(/type="password"/g) || [];
-  assert.equal(pwInputs.length, 2, "应有两个密码输入框（BotSecret 与 Kimi Key）");
+  assert.equal(pwInputs.length, 3, "应有三个密码输入框（BotSecret、Kimi Key、邮箱授权码）");
   // 从服务端回填时密钥字段必须留空。
-  // 锚点用 "onMounted(async" 而不是 "onMounted"：后者会先匹配到 import 行，
-  // 把切片切成空的。
-  const fill = view.slice(view.indexOf("function fillFromServer"), view.indexOf("onMounted(async"));
+  const fill = view.slice(view.indexOf("function fillFromServer"), view.indexOf("async function ensureLoaded"));
   assert.match(fill, /botSecret\.value = ""/);
   assert.match(fill, /kimiApiKey\.value = ""/);
   // 保存时只在用户确实输入了才带上密钥字段。
-  const submit = view.slice(view.indexOf("function buildInput"), view.indexOf("async function submit"));
+  const submit = view.slice(view.indexOf("function buildInput"), view.indexOf("async function submitAssistant"));
   assert.match(submit, /if \(secret\) input\.botSecret = secret/);
   assert.match(submit, /if \(key\) input\.kimiApiKey = key/);
 });
@@ -69,20 +67,28 @@ test("settings view surfaces encryption-missing and owner-only states", () => {
   assert.match(view, /C\.assistantKeyLost/, "必须提示主密钥丢失不可恢复");
 });
 
-test("settings page is wired into App with a gear icon", () => {
-  assert.match(app, /ref<"tasks" \| "focus" \| "goals" \| "stats" \| "settings">\("tasks"\)/);
+test("settings dialogs are opened from the sidebar menu, no settings page", () => {
+  // 不再有设置页：页面联合类型里没有 settings，也没有 page = 'settings' 跳转。
+  assert.match(app, /ref<"tasks" \| "focus" \| "goals" \| "habits" \| "ledger" \| "stats">\("tasks"\)/);
+  assert.doesNotMatch(app, /page === 'settings'/);
   assert.match(app, /import SettingsView from "\.\/components\/SettingsView\.vue"/);
-  assert.match(app, /<SettingsView v-else-if="page === 'settings'" \/>/);
-  assert.match(app, /page = 'settings'/);
+  // 弹框常驻挂载，侧栏菜单经 ref 直接打开。
+  assert.match(app, /<SettingsView ref="settingsRef" \/>/);
+  for (const which of ["bot", "llm", "mail"]) {
+    assert.match(app, new RegExp(`openSettings\\('${which}'\\)`));
+  }
   assert.match(app, /<Icon name="gear" \/>/);
-  // 「新建任务」按钮只在任务页出现。
-  assert.match(app, /v-if="page === 'tasks'"\s+class="primary-button new-task"/);
+  // 「新建任务」按钮在任务页工具条（与视图切换同一行），搜索框已下线。
+  assert.match(app, /class="primary-button workspace-cta new-task"/);
+  assert.doesNotMatch(app, /task-search/);
 });
 
 test("copy has the settings strings", () => {
-  for (const key of ["settings", "settingsSubtitle", "assistantTitle", "assistantSaved", "assistantEncryptionMissing", "assistantKeyLost"]) {
+  for (const key of ["settingsMenu", "assistantTitle", "assistantSaved", "assistantEncryptionMissing", "assistantKeyLost"]) {
     assert.match(copy, new RegExp(`\\b${key}:`), `copy.ts 缺少 ${key}`);
   }
+  // 设置页已下线：页面标题/副标题文案随之删除。
+  assert.doesNotMatch(copy, /\bsettingsSubtitle:/);
 });
 
 test("store never logs or notifies with raw secret values", () => {
@@ -116,7 +122,7 @@ test("settings view has run controls and no enabled checkbox", () => {
 });
 
 test("copy has the run-control strings", () => {
-  for (const key of ["assistantTest", "assistantTestOk", "assistantTestFailed", "assistantStart", "assistantStop", "assistantRunning", "assistantStopped", "assistantNotConfigured", "assistantStartNoCredentials", "assistantControlHint"]) {
+  for (const key of ["assistantTest", "assistantTestOk", "assistantTestFailed", "assistantStart", "assistantStop", "assistantRunning", "assistantStopped", "assistantNotConfigured", "assistantStartNoCredentials"]) {
     assert.match(copy, new RegExp(`\\b${key}:`), `copy.ts 缺少 ${key}`);
   }
 });
@@ -152,4 +158,138 @@ test("copy has the LLM test strings and the renamed title", () => {
     assert.match(copy, new RegExp(`\\b${key}:`), `copy.ts 缺少 ${key}`);
   }
   assert.match(copy, /assistantAiTitle:\s*"LLM API 配置"/);
+});
+
+test("three config dialogs are exposed and opened via defineExpose", () => {
+  // 三个原生 dialog，由 openBot/openLlm/openMail 打开（App 侧栏菜单调用）。
+  const dialogs = view.match(/<dialog /g) || [];
+  assert.equal(dialogs.length, 3);
+  assert.match(view, /defineExpose\(\{ openBot, openLlm, openMail \}\)/);
+  for (const fn of ["openBot", "openLlm", "openMail"]) {
+    assert.match(view, new RegExp(`async function ${fn}\\(\\)`));
+    assert.match(view, new RegExp(`${fn.replace("open", "").toLowerCase()}El\\.value\\?\\.showModal\\(\\)`));
+  }
+  // 配置视图懒加载：第一次打开弹框才拉取。
+  assert.match(view, /async function ensureLoaded\(\): Promise<void>/);
+  // 点遮罩关闭。
+  assert.match(view, /function onBackdrop\(e: MouseEvent\)/);
+  for (const ref of ["botEl", "llmEl", "mailEl"]) {
+    assert.match(view, new RegExp(`ref="${ref}"`));
+  }
+  // 弹框内仍是独立表单：取消 + 主色保存。
+  assert.equal((view.match(/type="submit"/g) || []).length, 3);
+});
+
+test("long hint paragraphs are gone from the settings UI", () => {
+  // 说明性长文案不再渲染（菜单行状态 + 内联反馈已足够）。
+  for (const key of [
+    "assistantHint", "assistantAiHint", "assistantControlHint",
+    "assistantNoKeyField", "assistantClearHint",
+    "mailHint", "mailKeywordsHint", "mailAuthLinkHint",
+  ]) {
+    assert.doesNotMatch(view, new RegExp(`C\\.${key}\\b`), `设置页不应再渲染 ${key}`);
+    assert.doesNotMatch(copy, new RegExp(`\\b${key}:`), `copy.ts 应删除 ${key}`);
+  }
+  // 密钥丢失不可恢复的安全提示保留（AGENTS.md 要求如实告知）。
+  assert.match(view, /C\.assistantKeyLost/);
+});
+
+/* ── 邮箱账单导入：原生 IMAP（邮箱地址 + 授权码） ─────────────────────────
+ * CLI / OAuth 方案已下线：没有 authorize/revoke 端点、没有授权链接轮询、
+ * 没有 cliAvailable 提示。凭据经服务端加密落库，前端只回显掩码。 */
+
+test("mail view is a masked IMAP view with no CLI/OAuth leftovers", () => {
+  const viewDef = store.slice(store.indexOf("export interface MailConfigView"), store.indexOf("export interface MailConfigInput"));
+  assert.match(viewDef, /mailbox: string/);
+  assert.match(viewDef, /authCodeSet: boolean/, "掩码视图只回「是否已设置」");
+  assert.doesNotMatch(viewDef, /authCode: string|authCodeEnc|cliAvailable|MailAuthView/, "视图不得含凭据字段");
+  assert.doesNotMatch(store, /authorizeMail|revokeMail|MailAuthView/);
+  // 启动失败映射：无凭据（未填/已撤销）如实提示，没有 CLI 缺失这类错误码。
+  const start = store.slice(store.indexOf("export async function startMailImport"));
+  assert.match(start, /no_credentials/);
+  assert.doesNotMatch(start, /cli_unavailable/);
+});
+
+test("mail save input carries credentials with keep/clear semantics", () => {
+  const inputDef = store.slice(store.indexOf("export interface MailConfigInput"), store.indexOf("/* 目标"));
+  assert.match(inputDef, /mailbox\?: string/);
+  assert.match(inputDef, /authCode\?: string/);
+  assert.match(inputDef, /clearAuthCode\?: boolean/);
+  // 测试连接带表单当前值；留空由服务端回退已存凭据。
+  const testFn = store.slice(store.indexOf("export async function testMailConnection"), store.indexOf("export async function startMailImport"));
+  assert.match(testFn, /body: input \?\? \{\}/);
+});
+
+test("mail dialog collects mailbox + auth code and never prefills secrets", () => {
+  // 授权码是 password 输入，永不回显；邮箱地址可编辑回显。
+  const mailDlg = view.slice(view.indexOf('ref="mailEl"'));
+  assert.match(mailDlg, /v-model="mailAddr"/);
+  assert.match(mailDlg, /v-model="mailCode"[\s\S]*?type="password"/);
+  const fill = view.slice(view.indexOf("function fillMailFromServer"), view.indexOf("async function ensureLoaded"));
+  assert.match(fill, /mailAddr\.value = v\?\.mailbox \?\? ""/);
+  assert.match(fill, /mailCode\.value = ""/);
+  assert.match(fill, /clearAuthCode\.value = false/);
+  // 保存入参：授权码只在确实输入时带上，撤销优先于填写。
+  const build = view.slice(view.indexOf("function buildMailInput"), view.indexOf("async function submitMail"));
+  assert.match(build, /if \(code\) input\.authCode = code/);
+  assert.match(build, /input\.clearAuthCode = true/);
+  assert.doesNotMatch(view, /authorize\(|revoke\(|authUrl|cliAvailable|mailAuthPending|syncAuthPoll/);
+});
+
+test("copy has the IMAP credential strings and no OAuth/CLI strings", () => {
+  for (const key of [
+    "mailMailbox", "mailAuthCode", "mailAuthCodeKeep", "mailAuthCodeNew",
+    "mailClearAuthCode", "mailNoCredentials",
+    "mailTest", "mailStart", "mailStop", "mailSaved",
+  ]) {
+    assert.match(copy, new RegExp(`\\b${key}:`), `copy.ts 缺少 ${key}`);
+  }
+  for (const dead of [
+    "mailCliMissing", "mailCliInstall", "mailMailboxUnset", "mailAuthorize",
+    "mailAuthorizing", "mailReauthorize", "mailAuthorizeFailed", "mailAuthWaiting",
+    "mailAuthRequired", "mailRevoke", "mailRevokeFailed", "mailRevokedNotice",
+  ]) {
+    assert.doesNotMatch(copy, new RegExp(`\\b${dead}:`), `copy.ts 应删除 ${dead}`);
+  }
+});
+
+/* ── 账单邮件来源：预筛只按发件人（关键词预筛已整体下线） ──
+ * 银行发件地址固定，让用户从自己邮箱里发现真实发件人来勾选，
+ * 不硬编码银行地址目录；senders 整体写入；不配来源则全部交给 Kimi 判定。 */
+
+test("mail config carries sender allowlist with replace-on-write semantics", () => {
+  const viewDef = store.slice(store.indexOf("export interface MailConfigView"), store.indexOf("export interface MailConfigInput"));
+  assert.match(viewDef, /senders: string/, "掩码视图应回来源清单（非机密）");
+  const inputDef = store.slice(store.indexOf("export interface MailConfigInput"), store.indexOf("/* 目标"));
+  assert.match(inputDef, /senders: string/, "保存入参带完整来源清单");
+});
+
+test("store exposes discover action hitting the discover endpoint", () => {
+  assert.match(store, /export async function discoverMailSenders\(/);
+  assert.match(store, /wsPath\("\/mail\/discover"\)/);
+  const body = store.slice(store.indexOf("export async function discoverMailSenders"), store.indexOf("export async function startMailImport"));
+  assert.match(body, /body: input \?\? \{\}/);
+});
+
+test("mail dialog picks senders from discovered list and custom input", () => {
+  const mailDlg = view.slice(view.indexOf('ref="mailEl"'));
+  assert.match(mailDlg, /@click="discoverSenders"/);
+  assert.match(mailDlg, /toggleSender\(d\.from/);
+  assert.match(mailDlg, /@click="addCustomSender"/);
+  assert.match(mailDlg, /v-model="customSender"/);
+  assert.match(mailDlg, /hasSender\(d\.from\)/);
+  const fill = view.slice(view.indexOf("function fillMailFromServer"), view.indexOf("async function ensureLoaded"));
+  assert.match(fill, /v\?\.senders \?\? ""\)/);
+  const build = view.slice(view.indexOf("function buildMailInput"), view.indexOf("async function submitMail"));
+  assert.match(build, /senders: senders\.value\.join\("\|"\)/);
+});
+
+test("copy has the sender allowlist strings", () => {
+  for (const key of [
+    "mailSenders", "mailSendersNote", "mailSenderAdd", "mailSenderRemove",
+    "mailSenderCustomPlaceholder", "mailSenderDiscover", "mailSenderDiscovering",
+    "mailSenderDiscoverCount", "mailSenderDiscoverEmpty", "mailSenderDiscoverFailed",
+  ]) {
+    assert.ok(copy.includes(key + ":"), `copy.ts 缺少 ${key}`);
+  }
 });

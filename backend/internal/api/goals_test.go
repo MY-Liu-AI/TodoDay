@@ -6,13 +6,13 @@ import (
 	"testing"
 )
 
-// 目标模块的端到端契约：创建/挂载/进度视图/软删恢复/409 冲突/越权。
+// 目标模块的端到端契约：创建/里程碑/挂载/进度视图/软删恢复/409 冲突/越权。
 func TestGoalsLifecycle(t *testing.T) {
 	e := newTestEnv(t)
 	e.register("goalie", "password123")
 	wid := e.wid()
 
-	// 建三个任务，一个目标，挂两个任务。
+	// 建三个任务，一个目标，一个里程碑，挂两个任务。
 	var taskIDs []string
 	for _, title := range []string{"定场地", "发邀请", "彩排"} {
 		resp, out := e.do("POST", wu(wid)+"/tasks", map[string]any{
@@ -25,14 +25,25 @@ func TestGoalsLifecycle(t *testing.T) {
 	}
 
 	resp, out := e.do("POST", wu(wid)+"/goals", map[string]any{
-		"title": "发布会筹备", "note": "月底发布", "group": "工作", "mode": "sequential", "due": "2026-10-31", "status": "active",
+		"title": "发布会筹备", "goalText": "办成一场发布会", "acceptance": "到场 200 人",
+		"failureCost": "错过窗口期", "group": "工作", "status": "active",
 	})
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("create goal: %d", resp.StatusCode)
 	}
 	gid := int64(out["id"].(float64))
-	if out["mode"] != "sequential" || out["due"] != "2026-10-31" || out["createdAt"] == "" || out["group"] != "工作" {
+	if out["goalText"] != "办成一场发布会" ||
+		out["acceptance"] != "到场 200 人" || out["failureCost"] != "错过窗口期" ||
+		out["createdAt"] == "" || out["group"] != "工作" {
 		t.Fatalf("目标字段不对：%v", out)
+	}
+	// 目标不再有截止日期：响应里不应再出现 due。
+	if _, exists := out["due"]; exists {
+		t.Fatalf("目标不应再返回 due：%v", out)
+	}
+	// mode 已随并行目标一并下架：响应里不应再出现 mode。
+	if _, exists := out["mode"]; exists {
+		t.Fatalf("目标不应再返回 mode：%v", out)
 	}
 
 	// 分组标签超长 → 400。
@@ -41,26 +52,62 @@ func TestGoalsLifecycle(t *testing.T) {
 		t.Fatalf("超长分组应 400，得到 %d", resp.StatusCode)
 	}
 
-	resp, out = e.do("POST", wu(wid)+"/goals/"+itoa(gid)+"/tasks", map[string]any{"taskId": taskIDs[0]})
-	if resp.StatusCode != http.StatusOK || len(out["tasks"].([]any)) != 1 {
+	// 里程碑：创建（带起止日期）→ 编辑（乐观并发）→ 删除/恢复。
+	resp, out = e.do("POST", wu(wid)+"/goals/"+itoa(gid)+"/milestones", map[string]any{
+		"title": "预热", "start": "2026-11-01", "due": "2026-11-07",
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create milestone: %d", resp.StatusCode)
+	}
+	mstones := out["milestones"].([]any)
+	if len(mstones) != 1 {
+		t.Fatalf("应返回 1 个里程碑：%v", out)
+	}
+	ms := mstones[0].(map[string]any)
+	mid := int64(ms["id"].(float64))
+	if ms["title"] != "预热" || ms["start"] != "2026-11-01" || ms["due"] != "2026-11-07" {
+		t.Fatalf("里程碑字段不对：%v", ms)
+	}
+
+	resp, out = e.do("PATCH", wu(wid)+"/goals/"+itoa(gid)+"/milestones/"+itoa(mid), map[string]any{
+		"title": "正式预热", "start": "2026-11-02", "due": "2026-11-08", "version": 99,
+	})
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("里程碑过期 version 应 409，得到 %d", resp.StatusCode)
+	}
+	resp, out = e.do("PATCH", wu(wid)+"/goals/"+itoa(gid)+"/milestones/"+itoa(mid), map[string]any{
+		"title": "正式预热", "start": "2026-11-02", "due": "2026-11-08", "version": 1,
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("update milestone: %d", resp.StatusCode)
+	}
+
+	// 挂载两个任务到里程碑。
+	resp, out = e.do("POST", wu(wid)+"/goals/"+itoa(gid)+"/milestones/"+itoa(mid)+"/tasks", map[string]any{"taskId": taskIDs[0]})
+	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("attach: %d %v", resp.StatusCode, out)
 	}
-	e.do("POST", wu(wid)+"/goals/"+itoa(gid)+"/tasks", map[string]any{"taskId": taskIDs[1]})
+	e.do("POST", wu(wid)+"/goals/"+itoa(gid)+"/milestones/"+itoa(mid)+"/tasks", map[string]any{"taskId": taskIDs[1]})
 
 	// 一条任务只能属于一个目标：再挂一次 → 409。
-	resp, _ = e.do("POST", wu(wid)+"/goals/"+itoa(gid)+"/tasks", map[string]any{"taskId": taskIDs[0]})
+	resp, _ = e.do("POST", wu(wid)+"/goals/"+itoa(gid)+"/milestones/"+itoa(mid)+"/tasks", map[string]any{"taskId": taskIDs[0]})
 	if resp.StatusCode != http.StatusConflict {
 		t.Fatalf("重复挂载应 409，得到 %d", resp.StatusCode)
 	}
 
-	// 列表：active 目标带 2 个任务视图。
+	// 列表：active 目标带 1 个里程碑、2 个任务视图。
 	resp, out = e.do("GET", wu(wid)+"/goals", nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("list: %d", resp.StatusCode)
 	}
 	goals := out["goals"].([]any)
-	if len(goals) != 1 || len(goals[0].(map[string]any)["tasks"].([]any)) != 2 {
+	g0 := goals[0].(map[string]any)
+	if len(goals) != 1 || len(g0["milestones"].([]any)) != 1 {
 		t.Fatalf("list 内容不对：%v", out)
+	}
+	msTasks := g0["milestones"].([]any)[0].(map[string]any)["tasks"].([]any)
+	if len(msTasks) != 2 {
+		t.Fatalf("里程碑下应有 2 个任务：%v", msTasks)
 	}
 
 	// 完成任务 → 目标视图的 done 反映出来（进度推导的输入）。
@@ -69,20 +116,34 @@ func TestGoalsLifecycle(t *testing.T) {
 		t.Fatalf("completion: %d", resp.StatusCode)
 	}
 	_, out = e.do("GET", wu(wid)+"/goals", nil)
-	tasks := out["goals"].([]any)[0].(map[string]any)["tasks"].([]any)
-	if tasks[0].(map[string]any)["done"] != true || tasks[1].(map[string]any)["done"] != false {
-		t.Fatalf("done 未反映：%v", tasks)
+	msTasks = out["goals"].([]any)[0].(map[string]any)["milestones"].([]any)[0].(map[string]any)["tasks"].([]any)
+	if msTasks[0].(map[string]any)["done"] != true || msTasks[1].(map[string]any)["done"] != false {
+		t.Fatalf("done 未反映：%v", msTasks)
 	}
 
 	// 乐观并发：过期 version → 409。
 	resp, _ = e.do("PATCH", wu(wid)+"/goals/"+itoa(gid), map[string]any{
-		"title": "改名", "mode": "sequential", "status": "active", "version": 99,
+		"title": "改名", "status": "active", "version": 99,
 	})
 	if resp.StatusCode != http.StatusConflict {
 		t.Fatalf("过期 version 应 409，得到 %d", resp.StatusCode)
 	}
 
-	// 软删 + 恢复。
+	// 里程碑删除（软删，其下任务解除挂载）+ 恢复。
+	resp, out = e.do("POST", wu(wid)+"/goals/"+itoa(gid)+"/milestones/"+itoa(mid)+"/delete", map[string]any{})
+	if resp.StatusCode != http.StatusOK || len(out["milestones"].([]any)) != 0 {
+		t.Fatalf("delete milestone: %d %v", resp.StatusCode, out)
+	}
+	resp, _ = e.do("GET", wu(wid)+"/tasks?q=定场地", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("删除里程碑不应删任务")
+	}
+	resp, out = e.do("POST", wu(wid)+"/goals/"+itoa(gid)+"/milestones/"+itoa(mid)+"/restore", map[string]any{})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("restore milestone: %d", resp.StatusCode)
+	}
+
+	// 目标软删 + 恢复。
 	resp, _ = e.do("POST", wu(wid)+"/goals/"+itoa(gid)+"/delete", map[string]any{})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("delete: %d", resp.StatusCode)
@@ -92,24 +153,26 @@ func TestGoalsLifecycle(t *testing.T) {
 		t.Fatalf("软删后不该列出：%v", out)
 	}
 	resp, out = e.do("POST", wu(wid)+"/goals/"+itoa(gid)+"/restore", map[string]any{})
-	if resp.StatusCode != http.StatusOK || len(out["tasks"].([]any)) != 2 {
+	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("restore: %d %v", resp.StatusCode, out)
 	}
 
+	// 里程碑删除时任务已解除挂载（恢复不自动回填）：重新挂两个再测移出。
+	e.do("POST", wu(wid)+"/goals/"+itoa(gid)+"/milestones/"+itoa(mid)+"/tasks", map[string]any{"taskId": taskIDs[0]})
+	e.do("POST", wu(wid)+"/goals/"+itoa(gid)+"/milestones/"+itoa(mid)+"/tasks", map[string]any{"taskId": taskIDs[1]})
+
 	// 移出任务后任务本身还在任务列表里。
 	resp, out = e.do("POST", wu(wid)+"/goals/"+itoa(gid)+"/tasks/remove", map[string]any{"taskId": taskIDs[1]})
-	if resp.StatusCode != http.StatusOK || len(out["tasks"].([]any)) != 1 {
+	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("detach: %d %v", resp.StatusCode, out)
+	}
+	msTasks = out["milestones"].([]any)[0].(map[string]any)["tasks"].([]any)
+	if len(msTasks) != 1 {
+		t.Fatalf("detach 后里程碑应剩 1 个任务：%v", msTasks)
 	}
 	resp, _ = e.do("GET", wu(wid)+"/tasks?q=发邀请", nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("detach 不应删任务")
-	}
-
-	// 重排：ids 数量不符 → 400。
-	resp, _ = e.do("POST", wu(wid)+"/goals/"+itoa(gid)+"/tasks/reorder", map[string]any{"ids": []string{taskIDs[0], taskIDs[1]}})
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("重排数量不符应 400，得到 %d", resp.StatusCode)
 	}
 
 	// 目标整体重排：再建两个目标，把三个逆序提交，列表顺序跟着变。
@@ -148,7 +211,57 @@ func TestGoalsLifecycle(t *testing.T) {
 	}
 }
 
-// 输入校验：空标题、非法日期、非法 mode/status 都被 400 挡住或收敛。
+// 里程碑输入校验：空标题、日期格式、开始晚于截止、非法目标/里程碑 id。
+func TestGoalMilestonesValidation(t *testing.T) {
+	e := newTestEnv(t)
+	e.register("goal-ms-check", "password123")
+	wid := e.wid()
+
+	resp, out := e.do("POST", wu(wid)+"/goals", map[string]any{"title": "校验目标"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create goal: %d", resp.StatusCode)
+	}
+	gid := int64(out["id"].(float64))
+
+	resp, _ = e.do("POST", wu(wid)+"/goals/"+itoa(gid)+"/milestones", map[string]any{"title": ""})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("空里程碑标题应 400，得到 %d", resp.StatusCode)
+	}
+	resp, _ = e.do("POST", wu(wid)+"/goals/"+itoa(gid)+"/milestones", map[string]any{"title": "x", "start": "11/01"})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("非法日期格式应 400，得到 %d", resp.StatusCode)
+	}
+	resp, _ = e.do("POST", wu(wid)+"/goals/"+itoa(gid)+"/milestones", map[string]any{"title": "x", "start": "2026-11-09", "due": "2026-11-01"})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("开始晚于截止应 400，得到 %d", resp.StatusCode)
+	}
+	// 开始可单独设置、截止可单独设置。
+	resp, out = e.do("POST", wu(wid)+"/goals/"+itoa(gid)+"/milestones", map[string]any{"title": "只有截止", "due": "2026-11-30"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("只有截止应可创建：%d", resp.StatusCode)
+	}
+	mid := int64(out["milestones"].([]any)[0].(map[string]any)["id"].(float64))
+
+	// 里程碑 id 不属于该目标 → 404（不泄露存在性）。
+	resp, _ = e.do("PATCH", wu(wid)+"/goals/"+itoa(gid)+"/milestones/424242", map[string]any{
+		"title": "x", "version": 1,
+	})
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("不存在里程碑应 404，得到 %d", resp.StatusCode)
+	}
+	resp, _ = e.do("POST", wu(wid)+"/goals/424242/milestones/"+itoa(mid)+"/delete", map[string]any{})
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("不存在目标的里程碑删除应 404，得到 %d", resp.StatusCode)
+	}
+
+	// 挂载不存在的任务 → 404。
+	resp, _ = e.do("POST", wu(wid)+"/goals/"+itoa(gid)+"/milestones/"+itoa(mid)+"/tasks", map[string]any{"taskId": "t_nope"})
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("挂载不存在任务应 404，得到 %d", resp.StatusCode)
+	}
+}
+
+// 输入校验：空标题、战略决策超长、非法 status 被 400 挡住或收敛。
 func TestGoalsValidation(t *testing.T) {
 	e := newTestEnv(t)
 	e.register("goal-check", "password123")
@@ -158,28 +271,23 @@ func TestGoalsValidation(t *testing.T) {
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("空标题应 400，得到 %d", resp.StatusCode)
 	}
-	resp, _ = e.do("POST", wu(wid)+"/goals", map[string]any{"title": "x", "due": "2026-13-40"})
+	// 战略决策单问超长 → 400。
+	resp, _ = e.do("POST", wu(wid)+"/goals", map[string]any{"title": "x", "acceptance": string(make([]byte, 1001))})
 	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("非法日期应 400，得到 %d", resp.StatusCode)
+		t.Fatalf("超长验收标准应 400，得到 %d", resp.StatusCode)
 	}
-	resp, out := e.do("POST", wu(wid)+"/goals", map[string]any{"title": "x", "mode": "bogus", "status": "bogus"})
+	resp, out := e.do("POST", wu(wid)+"/goals", map[string]any{"title": "x", "status": "bogus"})
 	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("非法 mode/status 应收敛为默认值，得到 %d", resp.StatusCode)
+		t.Fatalf("非法 status 应收敛为默认值，得到 %d", resp.StatusCode)
 	}
-	if out["mode"] != "parallel" || out["status"] != "active" {
+	if out["status"] != "active" {
 		t.Fatalf("收敛结果不对：%v", out)
 	}
 
-	// 不存在的目标 → 404；挂载不存在的任务 → 404。
+	// 不存在的目标 → 404。
 	resp, _ = e.do("PATCH", wu(wid)+"/goals/424242", map[string]any{"title": "x", "version": 1})
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("不存在目标应 404，得到 %d", resp.StatusCode)
-	}
-	resp, out = e.do("POST", wu(wid)+"/goals", map[string]any{"title": "挂载目标"})
-	gid := int64(out["id"].(float64))
-	resp, _ = e.do("POST", wu(wid)+"/goals/"+itoa(gid)+"/tasks", map[string]any{"taskId": "t_nope"})
-	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("挂载不存在任务应 404，得到 %d", resp.StatusCode)
 	}
 }
 
@@ -195,6 +303,11 @@ func TestGoalsCrossWorkspaceDenied(t *testing.T) {
 		t.Fatalf("create: %d", resp.StatusCode)
 	}
 	gid := int64(out["id"].(float64))
+	resp, out = e.do("POST", wu(widB)+"/goals/"+itoa(gid)+"/milestones", map[string]any{"title": "私有里程碑"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create milestone: %d", resp.StatusCode)
+	}
+	mid := int64(out["milestones"].([]any)[0].(map[string]any)["id"].(float64))
 
 	e.register("goal-intruder", "password123")
 	jarIntruder := cloneJar(e.cj)
@@ -208,6 +321,10 @@ func TestGoalsCrossWorkspaceDenied(t *testing.T) {
 		{"PATCH", wu(widB) + "/goals/" + itoa(gid), map[string]any{"title": "x", "version": 1}},
 		{"POST", wu(widB) + "/goals/" + itoa(gid) + "/delete", map[string]any{}},
 		{"POST", wu(widB) + "/goals/" + itoa(gid) + "/restore", map[string]any{}},
+		{"POST", wu(widB) + "/goals/" + itoa(gid) + "/milestones", map[string]any{"title": "x"}},
+		{"PATCH", wu(widB) + "/goals/" + itoa(gid) + "/milestones/" + itoa(mid), map[string]any{"title": "x", "version": 1}},
+		{"POST", wu(widB) + "/goals/" + itoa(gid) + "/milestones/" + itoa(mid) + "/delete", map[string]any{}},
+		{"POST", wu(widB) + "/goals/" + itoa(gid) + "/milestones/" + itoa(mid) + "/tasks", map[string]any{"taskId": "t_x"}},
 	}
 	// 入侵者一律 403。
 	e.cj = jarIntruder

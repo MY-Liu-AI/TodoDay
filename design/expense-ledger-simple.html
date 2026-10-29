@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>概念原型 · 记账本（简约版）</title>
+<style>
+  /* 与主应用同源的设计语言：青绿主操作 + 六色分类色板 + 浅色默认 / 可选深色 */
+  :root {
+    color-scheme: light;
+    --bg: #f6f8f8;
+    --panel: #fff;
+    --raised: #f3f5f4;
+    --ink: #202622;
+    --muted: #656d68;
+    --faint: #737b76;
+    --line: #e3e7e4;
+    --line-soft: #edf0ee;
+    --accent: oklch(0.49 0.085 185);
+    --accent-ink: #fff;
+    --accent-soft: #e4f2ef;
+    --neg: #a74636;
+    --sans: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    --mono: "SF Mono", "Cascadia Mono", Consolas, monospace;
+    --r: 6px;
+    --radius: 14px;
+    --ease: cubic-bezier(0.16, 1, 0.3, 1);
+    --shadow: 0 1px 2px rgba(30, 50, 45, 0.05), 0 8px 24px rgba(30, 50, 45, 0.06);
+    --cyan-line: #25869c;
+    --yellow-line: #978018;
+    --peach-line: #b76b35;
+    --coral-line: #bc5c53;
+    --teal-line: #358570;
+    --slate-line: #7a8790;
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #171b19;
+    --panel: #1e2320;
+    --raised: #282f2a;
+    --ink: #edf2ed;
+    --muted: #b4beb6;
+    --faint: #a5b0a8;
+    --line: #39423b;
+    --line-soft: #303830;
+    --accent: oklch(0.79 0.09 177);
+    --accent-ink: #17271d;
+    --accent-soft: #253e38;
+    --neg: #efa698;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.2), 0 8px 24px rgba(0, 0, 0, 0.25);
+    --cyan-line: #73c9dc;
+    --yellow-line: #d4c26d;
+    --peach-line: #dfa87d;
+    --coral-line: #df9289;
+    --teal-line: #86c7b6;
+    --slate-line: #a3afb7;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  [hidden] { display: none !important; }
+  body { font-family: var(--sans); background: var(--bg); color: var(--ink); min-height: 100vh; font-size: 14px; }
+  button { font-family: inherit; cursor: pointer; font-size: 14px; color: inherit; background: none; border: 0; }
+  input { font-family: inherit; font-size: 14px; color: var(--ink); }
+  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+  /* ── 顶栏 ─────────────────────────────── */
+  .topbar { max-width: 640px; margin: 0 auto; padding: 28px 20px 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .topbar h1 { font-size: 20px; font-weight: 700; }
+  .topbar .sub { font-size: 12px; color: var(--faint); margin-top: 2px; }
+  .icon-btn { border: 1px solid var(--line); background: var(--panel); color: var(--faint); width: 34px; height: 34px; border-radius: 999px; display: grid; place-items: center; font-size: 15px; flex: none; }
+  .demo-note { max-width: 640px; margin: 10px auto 0; padding: 0 20px; font-size: 12px; color: var(--faint); }
+  main { max-width: 640px; margin: 0 auto; padding: 16px 20px 96px; }
+
+  /* ── 月份 + 汇总 ──────────────────────── */
+  .month-bar { display: flex; align-items: center; gap: 4px; margin-bottom: 12px; }
+  .month-title { font-size: 16px; font-weight: 700; min-width: 96px; text-align: center; }
+  .plain-btn { color: var(--faint); font-size: 18px; width: 32px; height: 32px; border-radius: 8px; }
+  .plain-btn:hover { background: var(--raised); color: var(--ink); }
+
+  .summary { display: flex; gap: 10px; }
+  .stat { flex: 1; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; box-shadow: var(--shadow); min-width: 0; }
+  .stat .k { font-size: 12px; color: var(--muted); }
+  .stat .v { font-size: 17px; font-weight: 700; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .stat .v.neg { color: var(--neg); }
+  .stat .v.pos { color: var(--accent); }
+
+  /* ── 流水列表 ─────────────────────────── */
+  .list-head { display: flex; align-items: baseline; justify-content: space-between; margin: 22px 2px 8px; }
+  .list-head h2 { font-size: 15px; font-weight: 600; }
+  .list-head .tip { font-size: 12px; color: var(--faint); }
+  .day-head { display: flex; align-items: baseline; gap: 8px; font-size: 12px; color: var(--muted); margin: 14px 2px 2px; }
+  .day-head .net { margin-left: auto; font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .tx-row { display: flex; align-items: center; gap: 10px; min-height: 48px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 0 12px; margin-top: 6px; font-size: 13px; }
+  .tx-row .who { font-weight: 600; white-space: nowrap; }
+  .tx-row .note { color: var(--faint); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tx-row .amt { margin-left: auto; font-weight: 600; white-space: nowrap; }
+  .amt.neg { color: var(--neg); } .amt.pos { color: var(--accent); }
+  .tx-row .ops { display: flex; gap: 0; }
+  .tx-row .ops button { color: var(--faint); font-size: 13px; padding: 6px; border-radius: 6px; }
+  .tx-row .ops button:hover { background: var(--raised); color: var(--ink); }
+  .empty { border: 1px dashed var(--line); border-radius: var(--radius); color: var(--faint); font-size: 13px; text-align: center; padding: 36px 16px; margin-top: 14px; line-height: 1.8; }
+
+  /* ── 分类色点 ─────────────────────────── */
+  .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; display: inline-block; }
+
+  /* ── 记一笔（bottom-sheet） ───────────── */
+  dialog { border: 0; border-radius: 16px; padding: 0; width: min(440px, calc(100vw - 32px)); box-shadow: 0 24px 64px rgba(20, 40, 35, 0.25); background: var(--panel); color: var(--ink); }
+  dialog::backdrop { background: rgb(20 30 24 / 0.28); }
+  #sheet { margin-top: auto; margin-bottom: 8px; max-height: 92vh; overflow: auto; }
+  @keyframes sheet-in { from { transform: translateY(24px); opacity: 0.6; } to { transform: translateY(0); opacity: 1; } }
+  #sheet[open] { animation: sheet-in 0.2s var(--ease); }
+  .dlg-body { padding: 20px; display: flex; flex-direction: column; gap: 12px; }
+  .dlg-body h3 { font-size: 16px; font-weight: 700; }
+
+  .sheet-amt { font-size: 30px; font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; min-height: 38px; font-family: var(--mono); }
+  .sheet-amt .ph { color: var(--faint); font-weight: 400; }
+
+  .seg { display: flex; gap: 4px; background: var(--raised); border-radius: 999px; padding: 3px; width: fit-content; }
+  .seg button { border: 0; background: transparent; padding: 6px 18px; border-radius: 999px; font-size: 13px; color: var(--muted); }
+  .seg button.is-on { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+
+  .cats { display: flex; gap: 6px; flex-wrap: wrap; }
+  .cat-chip { display: flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: 7px 12px; font-size: 13px; color: var(--ink); }
+  .cat-chip.is-on { border-color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+
+  .field { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--muted); }
+  .field input { border: 1px solid var(--line); border-radius: var(--r); padding: 9px 12px; background: var(--panel); outline: none; min-height: 40px; }
+  .field input:focus { border-color: var(--accent); }
+  .field-row { display: flex; gap: 10px; }
+  .field-row .field { flex: 1; }
+
+  .keypad { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .key { height: 46px; border: 1px solid var(--line); background: var(--panel); border-radius: var(--r); font-size: 17px; font-weight: 600; color: var(--ink); font-family: var(--mono); }
+  .key:hover { background: var(--raised); }
+  .key.ok { grid-column: span 2; background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-family: var(--sans); font-size: 15px; }
+  .kbd-hint { font-size: 11px; color: var(--faint); text-align: center; }
+  .err { font-size: 12px; color: var(--neg); }
+  .dlg-actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .btn { border: 0; border-radius: 10px; padding: 9px 14px; font-size: 13px; font-weight: 600; }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); }
+  .btn.ghost { background: transparent; border: 1px solid var(--line); color: var(--muted); }
+
+  /* ── FAB / toast ──────────────────────── */
+  .fab { position: fixed; right: 24px; bottom: 24px; background: var(--accent); color: var(--accent-ink); border: 0; border-radius: 999px; padding: 13px 22px; font-size: 15px; font-weight: 700; box-shadow: var(--shadow); z-index: 40; }
+  .fab:hover { filter: brightness(1.06); }
+  .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--ink); color: var(--panel); border-radius: 10px; padding: 11px 18px; font-size: 13px; display: flex; gap: 14px; align-items: center; z-index: 100; box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18); max-width: calc(100vw - 32px); }
+  .toast button { border: 0; background: none; color: inherit; text-decoration: underline; font-size: 13px; padding: 0; white-space: nowrap; }
+
+  .footer-actions { display: flex; justify-content: center; margin-top: 28px; }
+  .footer-actions button { border: 0; background: none; color: var(--faint); font-size: 12px; text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div>
+    <h1>记账本</h1>
+    <div class="sub">记一笔，看一眼，就够了</div>
+  </div>
+  <button class="icon-btn" id="theme-btn" onclick="toggleTheme()" title="切换深浅色">🌙</button>
+</header>
+<p class="demo-note">概念原型：数据只存在本浏览器 localStorage，与主应用账户体系无关；视觉上沿用产品的青绿主色与六色分类色板。</p>
+
+<main>
+  <div class="month-bar">
+    <button class="plain-btn" onclick="shiftMonth(-1)" aria-label="上个月">‹</button>
+    <div class="month-title" id="month-title"></div>
+    <button class="plain-btn" onclick="shiftMonth(1)" aria-label="下个月">›</button>
+  </div>
+
+  <div class="summary" id="summary"></div>
+
+  <div class="list-head">
+    <h2>流水</h2>
+    <span class="tip">点 ✎ 改 · 点 ✕ 删（可撤销）</span>
+  </div>
+  <div id="list"></div>
+
+  <div class="footer-actions"><button onclick="resetDemo()">重置演示数据</button></div>
+</main>
+
+<button class="fab" onclick="openSheet()" title="记一笔（N）">＋ 记一笔</button>
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+<!-- 记一笔 -->
+<dialog id="sheet" tabindex="-1">
+  <div class="dlg-body">
+    <h3 id="sheet-title">记一笔</h3>
+    <div class="sheet-amt num" id="sheet-amt"><span class="ph">¥0.00</span></div>
+    <div class="seg" role="group" aria-label="类型">
+      <button id="seg-exp" onclick="setType('exp')">支出</button>
+      <button id="seg-inc" onclick="setType('inc')">收入</button>
+    </div>
+    <div class="cats" id="sheet-cats"></div>
+    <div class="field-row">
+      <label class="field">备注
+        <input id="sh-note" maxlength="40" placeholder="可留空" autocomplete="off" />
+      </label>
+      <label class="field">日期
+        <input id="sh-date" type="date" />
+      </label>
+    </div>
+    <div class="keypad">
+      <button class="key" onclick="keyIn('7')">7</button>
+      <button class="key" onclick="keyIn('8')">8</button>
+      <button class="key" onclick="keyIn('9')">9</button>
+      <button class="key" onclick="keyIn('back')">⌫</button>
+      <button class="key" onclick="keyIn('4')">4</button>
+      <button class="key" onclick="keyIn('5')">5</button>
+      <button class="key" onclick="keyIn('6')">6</button>
+      <button class="key" onclick="keyIn('clear')">C</button>
+      <button class="key" onclick="keyIn('1')">1</button>
+      <button class="key" onclick="keyIn('2')">2</button>
+      <button class="key" onclick="keyIn('3')">3</button>
+      <button class="key" onclick="keyIn('.')">.</button>
+      <button class="key" onclick="keyIn('0')">0</button>
+      <button class="key" onclick="keyIn('00')">00</button>
+      <button class="key ok" onclick="save(true)">✓ 保存</button>
+    </div>
+    <p class="kbd-hint">Enter 保存 · Shift+Enter 保存并再记一笔 · Esc 关闭 · 数字键直接输入</p>
+    <p class="err" id="sheet-error"></p>
+    <div class="dlg-actions">
+      <button class="btn ghost" onclick="closeDialog('sheet')">取消</button>
+      <button class="btn ghost" onclick="save(false)">保存并再记一笔</button>
+      <button class="btn primary" onclick="save(true)">保存</button>
+    </div>
+  </div>
+</dialog>
+
+<script>
+/* ═══════════ 基础工具 ═══════════ */
+const MS_DAY = 86400000;
+const $ = (id) => document.getElementById(id);
+const pad = (n) => String(n).padStart(2, "0");
+const dstr = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const mstr = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+const parseM = (s) => { const [y, m] = s.split("-").map(Number); return new Date(y, m - 1, 1); };
+const addMonths = (d, n) => new Date(d.getFullYear(), d.getMonth() + n, 1);
+const today = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; };
+const todayStr = () => dstr(today());
+const ago = (n) => new Date(today().getTime() - n * MS_DAY);
+const uid = () => Math.random().toString(36).slice(2, 10);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const money = (fen) => "¥" + (fen / 100).toLocaleString("zh-CN", { maximumFractionDigits: 2 });
+const WD = ["日", "一", "二", "三", "四", "五", "六"];
+const fmtDay = (ds) => { const d = new Date(ds + "T00:00:00"); return `${d.getMonth() + 1}月${d.getDate()}日 周${WD[d.getDay()]}`; };
+const fmtMonth = (m) => `${m.slice(0, 4)}年${parseInt(m.slice(5), 10)}月`;
+
+/* ═══════════ 分类（六色板 = 数据编码，与主应用一致） ═══════════ */
+const CATS = [
+  { id: "food",    name: "餐饮", color: "#b76b35" },
+  { id: "transit", name: "通勤", color: "#7a8790" },
+  { id: "home",    name: "居家", color: "#358570" },
+  { id: "shop",    name: "购物", color: "#bc5c53" },
+  { id: "fun",     name: "娱乐", color: "#25869c" },
+  { id: "study",   name: "学习", color: "#978018" },
+];
+const catById = (id) => CATS.find((c) => c.id === id);
+const dot = (id) => `<span class="dot" style="background:${(catById(id) || {}).color || "var(--slate-line)"}"></span>`;
+
+/* ═══════════ 演示数据（localStorage，ago(n) 相对生成，永不过期） ═══════════ */
+const LS_KEY = "demo-simple-ledger-v1";
+const THEME_KEY = "demo-simple-ledger-theme";
+let state;
+
+/* [几天前, 类型, 分类, 元, 备注] */
+const SEED = [
+  [0,"exp","food",32.5,"午餐外卖"],[0,"exp","food",12,"咖啡"],
+  [1,"exp","food",6,"早餐"],[1,"exp","food",25,"午餐"],[1,"exp","transit",5,"地铁"],
+  [2,"exp","food",22,"午餐"],[2,"exp","transit",25,"打车"],[2,"exp","home",50,"话费"],
+  [3,"exp","food",30,"午餐"],[3,"exp","home",36,"水果"],
+  [4,"exp","food",26,"午餐"],[4,"exp","transit",5,"地铁"],
+  [5,"exp","food",24,"午餐"],[5,"exp","food",18,"咖啡"],
+  [7,"exp","food",68,"周末外食"],[7,"exp","shop",129,"短袖"],
+  [8,"inc",null,18500,"10 月工资"],[8,"exp","home",186,"超市补给"],[8,"exp","food",88,"晚餐庆祝"],
+  [10,"exp","food",20,"午餐"],[10,"exp","fun",45,"电影票"],
+  [12,"exp","food",158,"同事聚餐"],
+  [14,"exp","study",68,"技术书"],
+  [16,"exp","transit",320,"加油"],
+  [19,"exp","home",216,"超市大采购"],
+  [21,"exp","food",132,"朋友聚餐"],
+  [23,"exp","fun",68,"iCloud+"],
+  [27,"exp","food",58,"周末外食"],
+  [33,"exp","home",238,"超市补给"],
+  [36,"inc",null,18500,"9 月工资"],
+  [42,"exp","food",145,"家庭聚餐"],
+];
+
+function seed() {
+  return {
+    entries: SEED.map(([n, type, cat, yuan, note]) => ({
+      id: uid(), date: dstr(ago(n)), type, catId: cat, fen: Math.round(yuan * 100), note, deletedAt: null,
+    })),
+    month: mstr(today()),
+  };
+}
+function load() {
+  try { const raw = localStorage.getItem(LS_KEY); if (raw) return JSON.parse(raw); } catch {}
+  return seed();
+}
+function persist() { try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch {} }
+function resetDemo() {
+  if (!confirm("重置演示数据？当前的改动会丢失。")) return;
+  state = seed();
+  persist(); render();
+  toast("已重置演示数据");
+}
+
+/* ═══════════ 派生计算 ═══════════ */
+const live = () => state.entries.filter((e) => !e.deletedAt);
+function monthStats(m) {
+  let exp = 0, inc = 0;
+  live().forEach((e) => {
+    if (!e.date.startsWith(m)) return;
+    if (e.type === "exp") exp += e.fen; else inc += e.fen;
+  });
+  return { exp, inc, net: inc - exp };
+}
+
+/* ═══════════ 渲染 ═══════════ */
+function shiftMonth(n) {
+  state.month = mstr(addMonths(parseM(state.month), n));
+  persist(); render();
+}
+
+function render() {
+  const m = state.month;
+  $("month-title").textContent = fmtMonth(m);
+
+  const s = monthStats(m);
+  $("summary").innerHTML = [
+    ["支出", "-" + money(s.exp), "neg"],
+    ["收入", "+" + money(s.inc), "pos"],
+    ["结余", (s.net < 0 ? "-" : "") + money(Math.abs(s.net)), s.net < 0 ? "neg" : ""],
+  ].map(([k, v, cls]) => `<div class="stat"><div class="k">${k}</div><div class="v num ${cls}">${v}</div></div>`).join("");
+
+  let txs = live().filter((e) => e.date.startsWith(m));
+  txs.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+  const wrap = $("list");
+  if (!txs.length) {
+    wrap.innerHTML = `<div class="empty">这个月还没有账目。<br>点右下角「＋ 记一笔」，或按键盘 N 开始。</div>`;
+    return;
+  }
+  const groups = [];
+  txs.forEach((e) => {
+    const g = groups.find((x) => x.date === e.date);
+    if (g) g.items.push(e);
+    else groups.push({ date: e.date, items: [e] });
+  });
+  wrap.innerHTML = groups.map((g) => {
+    const exp = g.items.filter((e) => e.type === "exp").reduce((x, e) => x + e.fen, 0);
+    const inc = g.items.filter((e) => e.type === "inc").reduce((x, e) => x + e.fen, 0);
+    const netTxt = [
+      exp ? `<span style="color:var(--neg)">支 ${money(exp)}</span>` : "",
+      inc ? `<span style="color:var(--accent)">收 ${money(inc)}</span>` : "",
+    ].filter(Boolean).join(" · ");
+    const rows = g.items.map((e) => {
+      const neg = e.type === "exp";
+      return `<div class="tx-row">${dot(e.catId)}<span class="who">${e.catId ? esc(catById(e.catId).name) : "收入"}</span><span class="note">${esc(e.note)}</span>
+        <span class="amt num ${neg ? "neg" : "pos"}">${neg ? "-" : "+"}${money(e.fen)}</span>
+        <span class="ops"><button title="编辑" onclick="openSheet('${e.id}')">✎</button><button title="删除" onclick="delTx('${e.id}')">✕</button></span></div>`;
+    }).join("");
+    return `<div class="day-head"><span>${fmtDay(g.date)}</span><span class="net">${netTxt}</span></div>${rows}`;
+  }).join("");
+}
+
+/* ═══════════ 记一笔（bottom-sheet） ═══════════ */
+let sheet = { editing: null, type: "exp", catId: null, amt: "", date: todayStr() };
+
+function openSheet(editingId) {
+  const editing = editingId ? state.entries.find((e) => e.id === editingId) : null;
+  sheet = {
+    editing: editing ? editing.id : null,
+    type: editing ? editing.type : "exp",
+    catId: editing ? editing.catId : null,
+    amt: editing ? String(editing.fen / 100) : "",
+    date: editing ? editing.date : todayStr(),
+  };
+  $("sheet-title").textContent = editing ? "编辑账目" : "记一笔";
+  $("sh-note").value = editing ? editing.note : "";
+  const dEl = $("sh-date");
+  dEl.value = sheet.date;
+  dEl.max = todayStr();
+  $("sheet-error").textContent = "";
+  renderSheet();
+  showDialog("sheet");
+  setTimeout(() => $("sheet").focus(), 0);
+}
+function renderSheet() {
+  $("sheet-amt").innerHTML = sheet.amt ? "¥" + esc(sheet.amt) : `<span class="ph">¥0.00</span>`;
+  $("seg-exp").classList.toggle("is-on", sheet.type === "exp");
+  $("seg-inc").classList.toggle("is-on", sheet.type === "inc");
+  $("sheet-cats").style.display = sheet.type === "inc" ? "none" : "";
+  $("sheet-cats").innerHTML = CATS.map((c) =>
+    `<button class="cat-chip ${sheet.catId === c.id ? "is-on" : ""}" onclick="pickCat('${c.id}')">${dot(c.id)}${esc(c.name)}</button>`).join("");
+}
+function setType(t) { sheet.type = t; renderSheet(); }
+function pickCat(id) { sheet.catId = id; renderSheet(); }
+function keyIn(k) {
+  let a = sheet.amt;
+  if (k === "clear") a = "";
+  else if (k === "back") a = a.slice(0, -1);
+  else if (k === ".") { if (!a.includes(".")) a = (a || "0") + "."; }
+  else if (k === "00") { if (a && a !== "0") a += "00"; }
+  else a = a === "0" ? k : a + k;
+  const i = a.indexOf(".");
+  if (i >= 0 && a.length - i > 3) a = a.slice(0, i + 3);
+  if (a.length > 9) a = a.slice(0, 9);
+  sheet.amt = a;
+  renderSheet();
+}
+function save(closeAfter) {
+  const fen = Math.round(parseFloat(sheet.amt || "0") * 100);
+  const err = $("sheet-error");
+  if (!(fen > 0)) { err.textContent = "请填写金额。"; return; }
+  if (sheet.type === "exp" && !sheet.catId) { err.textContent = "请选择分类。"; return; }
+  const date = $("sh-date").value;
+  if (!date || date > todayStr()) { err.textContent = "日期不能晚于今天。"; return; }
+  err.textContent = "";
+  const payload = { type: sheet.type, catId: sheet.type === "exp" ? sheet.catId : null, fen, note: $("sh-note").value.trim(), date };
+  if (sheet.editing) {
+    Object.assign(state.entries.find((e) => e.id === sheet.editing), payload);
+    persist(); render();
+    closeDialog("sheet");
+    toast("账目已更新");
+    return;
+  }
+  const entry = { id: uid(), deletedAt: null, ...payload };
+  state.entries.push(entry);
+  lastDel = null;
+  persist(); render();
+  if (closeAfter) {
+    closeDialog("sheet");
+    toast(`已记一笔 · ${entry.catId ? catById(entry.catId).name : "收入"} ${money(entry.fen)}`);
+  } else {
+    sheet.amt = ""; $("sh-note").value = "";
+    renderSheet();
+    toast("已记一笔，继续记下一笔");
+  }
+}
+
+/* ═══════════ 删除 / 撤销 / toast ═══════════ */
+let lastDel = null, toastTimer = null;
+function delTx(id) {
+  const e = state.entries.find((x) => x.id === id);
+  if (!e) return;
+  if (!confirm(`删除「${e.note || (e.catId ? catById(e.catId).name : "收入")} ${money(e.fen)}」？`)) return;
+  e.deletedAt = todayStr();
+  lastDel = id;
+  persist(); render();
+  toast("账目已删除", true);
+}
+function undoDel() {
+  const e = state.entries.find((x) => x.id === lastDel);
+  if (e) e.deletedAt = null;
+  lastDel = null;
+  persist(); render();
+  hideToast();
+}
+function toast(msg, withUndo = false) {
+  const t = $("toast");
+  t.innerHTML = `<span>${esc(msg)}</span>` + (withUndo && lastDel ? `<button onclick="undoDel()">撤销</button>` : "");
+  t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(hideToast, 5000);
+}
+function hideToast() { $("toast").hidden = true; }
+
+/* ═══════════ 键盘 / 主题 / 通用 ═══════════ */
+document.addEventListener("keydown", (e) => {
+  const inEditable = e.target.closest && e.target.closest("input, textarea, select");
+  const openDlg = document.querySelector("dialog[open]");
+  if (openDlg && openDlg.id === "sheet") {
+    if (!inEditable) {
+      if (/^[0-9]$/.test(e.key)) { keyIn(e.key); e.preventDefault(); }
+      else if (e.key === ".") { keyIn("."); e.preventDefault(); }
+      else if (e.key === "Backspace") { keyIn("back"); e.preventDefault(); }
+      else if (e.key === "Enter") { e.preventDefault(); e.shiftKey ? save(false) : save(true); }
+    } else if (e.key === "Enter" && ["sh-note", "sh-date"].includes(e.target.id)) {
+      e.preventDefault();
+      e.shiftKey ? save(false) : save(true);
+    }
+    return;
+  }
+  if (openDlg) return;
+  if (!inEditable && (e.key === "n" || e.key === "N")) { e.preventDefault(); openSheet(); }
+});
+
+function toggleTheme() {
+  const root = document.documentElement;
+  const next = root.dataset.theme === "dark" ? "light" : "dark";
+  root.dataset.theme = next;
+  try { localStorage.setItem(THEME_KEY, next); } catch {}
+  $("theme-btn").textContent = next === "dark" ? "☀️" : "🌙";
+}
+(function initTheme() {
+  let t = "light";
+  try { t = localStorage.getItem(THEME_KEY) || "light"; } catch {}
+  document.documentElement.dataset.theme = t;
+  $("theme-btn").textContent = t === "dark" ? "☀️" : "🌙";
+})();
+function showDialog(id) { const d = $(id); if (!d.open) d.showModal(); }
+function closeDialog(id) { $(id).close(); }
+document.addEventListener("click", (e) => { if (e.target.tagName === "DIALOG") e.target.close(); });
+
+/* boot */
+state = load();
+render();
+</script>
+</body>
+</html>

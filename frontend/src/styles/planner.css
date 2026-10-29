@@ -28,9 +28,19 @@
   --h2: #9dcdbc;
   --h3: #5fa995;
   --h4: var(--accent);
+  /* 圆角阶梯：交互控件 8、卡片面板 12、弹窗浮层 16，全文件统一取用。 */
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  /* 浮层阴影：弹窗用 pop（更深、有层次），菜单/toast 用 float。 */
+  --shadow-pop: 0 24px 56px rgb(20 30 24 / 0.16), 0 4px 12px rgb(20 30 24 / 0.06);
+  --shadow-float: 0 8px 24px rgb(20 30 24 / 0.12);
   --sans:
     "Geist Variable", "Noto Sans SC", "PingFang SC", "Microsoft YaHei",
-    sans-serif;
+    ui-sans-serif, sans-serif;
+  --mono:
+    "Geist Mono Variable", ui-monospace, SFMono-Regular, "SF Mono", Menlo,
+    monospace;
   --r: 6px;
   --ease: cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -53,6 +63,8 @@
   --h2: #52785b;
   --h3: #76a281;
   --h4: var(--accent);
+  --shadow-pop: 0 24px 56px rgb(0 0 0 / 0.5), 0 4px 12px rgb(0 0 0 / 0.32);
+  --shadow-float: 0 8px 24px rgb(0 0 0 / 0.4);
 }
 /* User-supplied calendar reference: category colors are data, not extra CTAs. */
 [data-color="cyan"] { --event-bg: #b4e7f0; --event-ink: #18536a; --event-line: #25869c; }
@@ -76,8 +88,37 @@ html[data-theme="dark"] {
 body {
   font-family: var(--sans);
   font-size: 14px;
+  line-height: 1.5;
   letter-spacing: 0;
   overscroll-behavior: auto;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+/* 选区与滚动条跟着设计变量走，深浅色自动适配。 */
+::selection {
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--line);
+  background-clip: content-box;
+  border: 2px solid transparent;
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--muted);
 }
 button,
 input,
@@ -113,65 +154,35 @@ button:disabled {
   border-right: 1px solid var(--line);
   overflow: auto;
 }
-.brand-lockup {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  margin: 0 4px 32px;
-}
-.brand-mark {
-  width: 36px;
-  height: 36px;
-  display: grid;
-  place-items: center;
-  border: 1px solid var(--accent);
-  border-radius: 10px;
-  color: var(--accent);
-  background: var(--accent-soft);
-}
-.brand-lockup strong {
-  font-size: 22px;
-  letter-spacing: -0.8px;
-  font-weight: 640;
-  line-height: 1;
-}
-.brand-period {
-  color: var(--accent);
-}
-.brand-lockup p {
-  font-size: 11px;
-  letter-spacing: 0.04em;
-  color: var(--muted);
-  margin-top: 6px;
-}
 .workspace-label {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 12px 8px;
-  margin-bottom: 20px;
+  gap: 10px;
+  padding: 14px 10px;
+  margin-bottom: 24px;
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
-  font-size: 12px;
-  font-weight: 500;
+  font-size: 16px;
+  font-weight: 600;
 }
 .workspace-avatar {
-  width: 28px;
-  height: 28px;
+  width: 40px;
+  height: 40px;
   border: 1px solid var(--line);
   background: var(--panel);
   display: grid;
   place-items: center;
-  border-radius: 6px;
+  border-radius: var(--r-md);
   font-weight: 600;
+  font-size: 16px;
 }
 .workspace-label small {
   display: block;
   font-family: var(--mono);
-  font-size: 9px;
+  font-size: 10px;
   letter-spacing: 0.06em;
   color: var(--faint);
-  margin-top: 2px;
+  margin-top: 3px;
 }
 .planner-nav {
   display: grid;
@@ -183,73 +194,30 @@ button:disabled {
   gap: 10px;
   background: none;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   padding: 10px 12px;
   text-align: left;
   color: var(--muted);
   font-weight: 500;
   font-size: 13px;
   min-height: 42px;
+  transition:
+    background 0.16s var(--ease),
+    color 0.16s var(--ease);
+}
+.planner-nav button:hover {
+  background: var(--raised);
+  color: var(--ink);
 }
 .planner-nav button.is-active {
   background: var(--accent-soft);
   color: var(--accent);
+  font-weight: 600;
 }
 .planner-nav button > span {
   margin-left: auto;
   font-family: var(--mono);
   font-size: 11px;
-}
-.group-navigation {
-  display: grid;
-  gap: 4px;
-  margin-top: 32px;
-}
-.nav-caption {
-  font-size: 10px;
-  letter-spacing: 0.1em;
-  color: var(--muted);
-  padding: 0 12px;
-  margin-bottom: 8px;
-}
-.group-navigation button {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  min-height: 36px;
-  border: 0;
-  background: none;
-  color: var(--muted);
-  font-size: 12px;
-  text-align: left;
-  border-radius: 6px;
-}
-.group-navigation button > span:not(.group-marker) {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.group-navigation button.is-current {
-  background: var(--raised);
-  color: var(--ink);
-}
-.group-marker {
-  width: 7px;
-  height: 7px;
-  border: 1px solid currentColor;
-  border-radius: 2px;
-  flex-shrink: 0;
-}
-.group-navigation [data-color] .group-marker {
-  width: 8px;
-  height: 8px;
-  background: var(--event-line);
-  border-color: var(--event-line);
-}
-.group-navigation small {
-  margin-left: auto;
-  font-family: var(--mono);
 }
 .sidebar-bottom {
   margin-top: auto;
@@ -287,8 +255,8 @@ button:disabled {
   padding: 4px;
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 10px;
-  box-shadow: 0 8px 24px rgb(0 0 0 / 0.12);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-float);
 }
 .settings-popup button {
   display: flex;
@@ -301,7 +269,7 @@ button:disabled {
   padding: 9px 10px;
   font-size: 12px;
   text-align: left;
-  border-radius: 7px;
+  border-radius: var(--r-sm);
 }
 .settings-popup button:hover {
   background: var(--raised);
@@ -315,29 +283,35 @@ button:disabled {
   overflow: auto;
   padding: 40px clamp(24px, 3.2vw, 56px) 20px;
 }
+/* 页头（单行 slim 版）：标题与同排副标题在左（副标题超长省略、窄屏隐藏），
+   主操作在右。比旧版 overline + 30px 大标题 + 独立副标题行矮一半以上。 */
 .workspace-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 24px;
+  margin: 2px 0 20px;
 }
-.overline {
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.13em;
-  color: var(--muted);
+.workspace-header-text {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  min-width: 0;
 }
 .workspace-header h1 {
-  font-size: 30px;
-  line-height: 1.2;
-  letter-spacing: -0.04em;
+  font-size: 20px;
+  /* 中文是方块字，display 负字距收一半即可，-0.04em 会让中文挤在一起。 */
+  letter-spacing: -0.02em;
   font-weight: 600;
-  margin: 12px 0 8px;
+  white-space: nowrap;
 }
 .workspace-header p {
   font-size: 13px;
   color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 .primary-button,
 .secondary-button,
@@ -347,11 +321,14 @@ button:disabled {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   min-height: 36px;
   font-size: 12px;
   font-weight: 500;
-  transition: background 0.16s var(--ease);
+  transition:
+    background 0.16s var(--ease),
+    filter 0.16s var(--ease),
+    color 0.16s var(--ease);
 }
 .primary-button {
   background: var(--accent);
@@ -361,6 +338,23 @@ button:disabled {
 }
 .primary-button:hover {
   filter: brightness(1.08);
+}
+/* 工具条主操作（新建任务/新建目标）：soft 变体——accent 浅底 + accent 字色 +
+   细描边，悬停反转为实心。比页头实心大按钮轻，与切换条同排不抢内容。 */
+.workspace-cta {
+  min-height: 34px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 550;
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in oklab, var(--accent) 26%, transparent);
+  color: var(--accent);
+}
+.workspace-cta:hover {
+  filter: none;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
 }
 .secondary-button {
   background: var(--panel);
@@ -399,7 +393,7 @@ button:disabled {
   line-height: 1.8;
   padding: 16px;
   background: var(--raised);
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   margin-top: 8px;
 }
 .storage-warning {
@@ -427,10 +421,17 @@ button:disabled {
   background: none;
   border: 0;
   color: var(--muted);
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   font-size: 13px;
   white-space: nowrap;
   min-height: 36px;
+  transition:
+    background 0.16s var(--ease),
+    color 0.16s var(--ease);
+}
+.view-switch button:hover {
+  background: var(--raised);
+  color: var(--ink);
 }
 .view-switch button.is-active {
   background: var(--accent-soft);
@@ -471,7 +472,7 @@ button:disabled {
   gap: 10px;
   padding: 6px 8px 6px 12px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   color: var(--faint);
   background: var(--panel);
   transition: border-color 0.16s;
@@ -497,12 +498,16 @@ button:disabled {
   gap: 8px;
   align-items: center;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   padding: 6px 10px;
   background: var(--raised);
   color: var(--ink);
   font-size: 12px;
   white-space: nowrap;
+  transition: background 0.16s var(--ease);
+}
+.quick-input button:hover {
+  background: var(--line-soft);
 }
 .quick-input button span {
   color: var(--faint);
@@ -527,11 +532,18 @@ button:disabled {
 .status-filters button {
   border: 0;
   padding: 6px 8px;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   background: none;
   font-size: 12px;
   color: var(--muted);
   min-height: 32px;
+  transition:
+    background 0.16s var(--ease),
+    color 0.16s var(--ease);
+}
+.status-filters button:hover {
+  background: var(--raised);
+  color: var(--ink);
 }
 .status-filters button.is-active {
   color: var(--ink);
@@ -604,7 +616,7 @@ button:disabled {
   display: grid;
   place-items: center;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   color: transparent;
   background: var(--panel);
   padding: 0;
@@ -778,7 +790,7 @@ button:disabled {
 .today-aside .cell {
   min-height: 28px;
   font-size: 10px;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
 }
 .today-aside .calgrid {
   gap: 2px;
@@ -796,7 +808,7 @@ button:disabled {
   background: var(--raised);
   padding: 8px 12px;
   font-size: 12px;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
 }
 .date-filter .text-button {
   font-size: 11px;
@@ -836,13 +848,6 @@ button:disabled {
 .planner-workspace:has(.calendar-view) .workspace-header {
   margin-bottom: 16px;
 }
-.planner-workspace:has(.calendar-view) .workspace-header .overline,
-.planner-workspace:has(.calendar-view) .workspace-header p {
-  display: none;
-}
-.planner-workspace:has(.calendar-view) .workspace-header h1 {
-  margin: 0;
-}
 .planner-workspace:has(.calendar-view) .workspace-toolbar {
   margin-top: 20px;
   margin-bottom: 20px;
@@ -870,7 +875,7 @@ button:disabled {
   grid-template-columns: repeat(7, minmax(0, 1fr));
   border: 1px solid var(--line);
   border-bottom: 0;
-  border-radius: 10px 10px 0 0;
+  border-radius: var(--r-md) var(--r-md) 0 0;
   overflow: hidden;
   background: var(--bg);
 }
@@ -1119,7 +1124,8 @@ button:disabled {
   max-height: calc(100dvh - 32px);
   overflow: auto;
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-pop);
   padding: 28px;
   color: var(--ink);
   background: var(--panel);
@@ -1152,10 +1158,17 @@ button:disabled {
   min-height: 42px;
   border: 1px solid var(--line);
   padding: 8px 12px;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   color: var(--ink);
   background: var(--panel);
   font-size: 14px;
+  transition: border-color 0.16s var(--ease);
+}
+.form-field input:focus,
+.form-field select:focus,
+.form-field textarea:focus {
+  border-color: var(--accent);
+  outline: none;
 }
 .form-field textarea {
   min-height: 64px;
@@ -1204,7 +1217,8 @@ button:disabled {
   z-index: 100;
   background: var(--ink);
   color: var(--panel);
-  border-radius: 10px;
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-float);
   display: flex;
   align-items: center;
   gap: 12px;
@@ -1240,7 +1254,7 @@ button:disabled {
   gap: 16px;
   padding: 32px 16px;
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: var(--r-lg);
   background: var(--panel);
 }
 .focus-ring {
@@ -1320,7 +1334,7 @@ button:disabled {
      不再是一块悬空的标题加一列裸行。 */
   padding: 18px 20px 20px;
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: var(--r-lg);
   background: var(--panel);
 }
 .focus-picker .overview-heading {
@@ -1503,7 +1517,7 @@ button.focus-task-expand {
   white-space: nowrap;
   color: var(--neg);
   background: color-mix(in srgb, var(--neg) 12%, transparent);
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   padding: 1px 6px;
 }
 .focus-task-state {
@@ -1662,17 +1676,7 @@ button.focus-task-expand {
     border-bottom: 1px solid var(--line);
     overflow: visible;
   }
-  .brand-lockup {
-    margin: 0 0 20px;
-  }
-  .brand-lockup strong {
-    font-size: 22px;
-  }
-  .brand-lockup p {
-    font-size: 11px;
-  }
-  .workspace-label,
-  .group-navigation {
+  .workspace-label {
     display: none;
   }
   /* 窄屏：左下角菜单整体收起，改用导航行末尾的齿轮入口 */
@@ -1711,29 +1715,17 @@ button.focus-task-expand {
     padding: 24px 20px 20px;
     overflow: visible;
   }
-  .workspace-header {
-    gap: 12px;
-    margin-bottom: 20px;
-    align-items: center;
-  }
-  .workspace-header h1 {
-    font-size: 26px;
-    margin-top: 8px;
-  }
+  /* 窄屏页头只留标题，副标题收起；工具条主操作同步收窄。 */
   .workspace-header p {
-    font-size: 12px;
-    max-width: 200px;
+    display: none;
   }
-  .overline {
-    font-size: 9px;
-  }
-  .new-task {
-    padding: 8px 10px;
+  .workspace-cta {
+    padding: 6px 10px;
     gap: 4px;
     white-space: nowrap;
-    font-size: 11px;
+    font-size: 12px;
   }
-  .new-task svg {
+  .workspace-cta svg {
     width: 15px;
   }
   .workspace-toolbar {
@@ -1988,13 +1980,13 @@ button.focus-task-expand {
 }
 .goal-stats {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 8px;
 }
 .goal-stat {
   background: var(--raised);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   padding: 14px 16px;
 }
 .goal-stat b {
@@ -2008,8 +2000,192 @@ button.focus-task-expand {
   font-size: 11px;
   color: var(--muted);
 }
-.goal-stat.is-warn b {
-  color: var(--warn);
+/* 目标列表统计图：串行甘特 + 并行打卡（替代原三格数字块；.goal-stats
+   样式保留——记账本三卡复用它）。 */
+.goal-chart {
+  margin-bottom: 4px;
+}
+/* 甘特：无边框泳道式布局。画布不吃面板底/边框/内边距，直接落在工作区上；
+   刻度行下沿是一条拉通左右的时间轴基线（图表顶部的锚点，两端对齐标签列
+   与完成度列），里程碑行无横线、靠行高与条带收节奏，目标组之间纯留白分隔，
+   只有今天线浮在行间。
+   三列（标签/时间轨/元信息）用同一套列宽变量，今天线与条严格对齐；
+   超窄屏整卡横向滚动。 */
+.gantt {
+  overflow-x: auto;
+}
+.gantt-canvas {
+  --gantt-label: 110px;
+  --gantt-meta: 116px;
+  --gantt-gap: 12px;
+  position: relative;
+  min-width: 560px;
+  overflow: hidden;
+}
+.gantt-ticks {
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--gantt-label) 1fr var(--gantt-meta);
+  gap: var(--gantt-gap);
+  padding: 2px 0 10px;
+}
+/* 时间轴基线拉通整行（与刻度下沿同一水平线）：左端对齐标签列、
+   右端对齐完成度列右缘，图表顶边与两端内容列一起收齐。 */
+.gantt-ticks::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+/* 刻度轨 = 时间轨 + 40px：span 到第 3 列后再用正外边距收回元信息列与
+   间距、只留 40px——刻度从今天起均匀分布在这条轨上，结尾刻度正好落在
+   时间轨右缘 +40px、紧邻进度列又不与之对齐（任何屏宽都不溢出）。 */
+.gantt-ticks-track {
+  grid-column: 2 / 4;
+  margin-right: calc(var(--gantt-meta) + var(--gantt-gap) - 40px);
+  position: relative;
+  display: block;
+  height: 14px;
+}
+.gantt-tick {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+}
+.gantt-tick:first-child {
+  transform: none;
+}
+/* 今天线定位层：位置 = 中间列（标签列 + 间距之后，元信息列 + 间距之前），
+   顶部对齐时间轴基线，底部收在内容底边。 */
+.gantt-grid {
+  position: absolute;
+  top: 17px;
+  bottom: 0;
+  left: calc(var(--gantt-label) + var(--gantt-gap));
+  right: calc(var(--gantt-meta) + var(--gantt-gap));
+  pointer-events: none;
+}
+.gantt-today {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--accent);
+  opacity: 0.7;
+}
+.gantt-today em {
+  position: absolute;
+  top: -4px;
+  left: 50%;
+  transform: translate(-50%, -100%);
+  font-style: normal;
+  font-size: 9px;
+  line-height: 1;
+  color: var(--accent);
+  background: var(--panel);
+  padding: 1px 3px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+.gantt-goal {
+  padding-bottom: 2px;
+}
+/* 目标组之间纯留白分隔——无边框布局里再加线就是第二种边框。 */
+.gantt-goal + .gantt-goal {
+  margin-top: 28px;
+}
+.gantt-goal-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.gantt-goal-title {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gantt-goal-pct {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--accent);
+}
+.gantt-row {
+  display: grid;
+  grid-template-columns: var(--gantt-label) 1fr var(--gantt-meta);
+  gap: var(--gantt-gap);
+  align-items: center;
+  height: 30px;
+}
+.gantt-row-label {
+  font-size: 12px;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 串行当前步：标题前的小圆点（与详情页 is-current 同语义）。 */
+.gantt-current-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  margin-right: 6px;
+  vertical-align: 1px;
+}
+.gantt-track {
+  position: relative;
+  height: 100%;
+}
+/* 胶囊条：浅灰底 = 排期跨度，青绿实心填充 = 子任务完成度。 */
+.gantt-bar {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 12px;
+  min-width: 12px;
+  border-radius: 999px;
+  background: var(--line-soft);
+  overflow: hidden;
+  z-index: 1;
+}
+/* 单边日期：开放端收成小圆角 + 虚线描边，示意「这端还没定」。 */
+.gantt-bar.open-end {
+  border-top-right-radius: 3px;
+  border-bottom-right-radius: 3px;
+  border-right: 1.5px dashed var(--accent);
+}
+.gantt-bar.open-start {
+  border-top-left-radius: 3px;
+  border-bottom-left-radius: 3px;
+  border-left: 1.5px dashed var(--accent);
+}
+.gantt-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+.gantt-row-meta {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+  /* 与目标头完成度同一条右缘，整列数字右边对齐。 */
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .goals-empty {
   font-size: 13px;
@@ -2047,7 +2223,7 @@ button.focus-task-expand {
   position: relative;
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   padding: 16px 18px;
   text-align: left;
   transition:
@@ -2123,32 +2299,6 @@ button.focus-task-expand {
   padding: 1px 6px;
   flex-shrink: 0;
 }
-.health {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 11px;
-  flex-shrink: 0;
-}
-.health::before {
-  content: "";
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-}
-.health.ok {
-  color: var(--accent);
-}
-.health.risk {
-  color: var(--warn);
-}
-.health.late {
-  color: var(--neg);
-}
-.health.none {
-  color: var(--faint);
-}
 .goal-note {
   font-size: 12px;
   color: var(--muted);
@@ -2185,8 +2335,197 @@ button.focus-task-expand {
   color: var(--ink);
   margin-left: auto;
 }
-.goal-card-foot .due.is-late {
-  color: var(--neg);
+/* 目标决策：细线卡片，头行可整块折叠；问题标签与答案同一行（grid 三列），
+   短答案只占一行不空洞，长答案折行后限高三行 + 「展开」。 */
+.goal-strategy {
+  margin: 18px 0 4px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+  background: var(--raised);
+  overflow: hidden;
+}
+.goal-strategy-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 14px 9px 16px;
+}
+.goal-strategy-title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  color: var(--faint);
+  text-transform: uppercase;
+}
+.goal-strategy-fold {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+  transition: background 0.15s var(--ease), color 0.15s var(--ease);
+}
+.goal-strategy-fold:hover {
+  background: var(--line-soft);
+  color: var(--ink);
+}
+.goal-strategy-body {
+  display: grid;
+  padding: 2px 16px 10px;
+}
+.goal-strategy-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 12px;
+  padding: 8px 0;
+}
+.goal-strategy-item + .goal-strategy-item {
+  border-top: 1px dashed var(--line);
+}
+.goal-strategy-q {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  padding-left: 9px;
+  border-left: 2px solid var(--accent);
+  line-height: 1.5;
+  transform: translateY(1px);
+}
+.goal-strategy-item p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.goal-strategy-item p.is-clamped {
+  -webkit-line-clamp: 3;
+}
+.goal-strategy-more {
+  border: none;
+  background: none;
+  padding: 0 0 0 4px;
+  font-size: 12px;
+  color: var(--accent);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.goal-strategy-more:hover {
+  text-decoration: underline;
+}
+/* ── 新建/编辑目标弹窗：三步强制决策向导 ──────────────────────────────
+   定目标 → 定验收 → 定代价与节奏；每步一个决策，下一步即校验。
+   全部走设计变量，深浅色自动适配。 */
+.goal-dialog {
+  width: min(560px, calc(100vw - 32px));
+}
+.goal-steps {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  list-style: none;
+  margin: 0 0 20px;
+  padding: 12px 14px;
+  background: var(--raised);
+  border-radius: var(--r-md);
+}
+.goal-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--faint);
+  white-space: nowrap;
+}
+.goal-step.is-current {
+  color: var(--ink);
+  font-weight: 600;
+}
+.goal-step.is-done {
+  color: var(--muted);
+}
+.goal-step-dot {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--faint);
+  flex: none;
+}
+.goal-step.is-current .goal-step-dot {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.goal-step.is-done .goal-step-dot {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.goal-step-line {
+  flex: 1;
+  min-width: 14px;
+  height: 1px;
+  background: var(--line);
+}
+.goal-step-body {
+  animation: goal-step-in 0.28s var(--ease);
+}
+@keyframes goal-step-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.goal-step-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--muted);
+}
+.goal-step-body .form-field:first-of-type {
+  margin-top: 12px;
+}
+.goal-field-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.goal-req {
+  font-style: normal;
+  color: var(--accent);
+}
+.goal-req::before {
+  content: "*";
+}
+.goal-step-count {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--faint);
 }
 .goal-detail-topbar {
   margin-bottom: 16px;
@@ -2200,23 +2539,23 @@ button.focus-task-expand {
 .goal-detail-head {
   display: flex;
   align-items: center;
-  gap: 24px;
+  gap: 20px;
   flex-wrap: wrap;
 }
 .goal-ring {
   position: relative;
-  width: 88px;
-  height: 88px;
+  width: 76px;
+  height: 76px;
   flex-shrink: 0;
 }
 .goal-ring svg {
-  width: 88px;
-  height: 88px;
+  width: 76px;
+  height: 76px;
   transform: rotate(-90deg);
 }
 .goal-ring circle {
   fill: none;
-  stroke-width: 8;
+  stroke-width: 7;
 }
 .goal-ring .track {
   stroke: var(--line-soft);
@@ -2233,13 +2572,13 @@ button.focus-task-expand {
   display: grid;
   place-items: center;
   font-family: var(--mono);
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 .goal-detail-title {
   flex: 1;
-  min-width: 220px;
+  min-width: 200px;
 }
 .goal-detail-title h3 {
   font-size: 20px;
@@ -2260,17 +2599,58 @@ button.focus-task-expand {
 .goal-detail-meta {
   margin-top: 4px;
 }
+/* 头部操作：主操作唯一主色，编辑图标按钮，归档/删除收进「···」菜单。 */
 .goal-detail-actions {
   display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+  margin-left: auto;
+}
+.goal-menu {
+  position: relative;
+}
+.goal-menu-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  min-width: 136px;
+  padding: 6px;
+  display: grid;
+  gap: 2px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(15, 20, 17, 0.14);
+}
+.goal-menu-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  font-size: 13px;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s var(--ease);
+}
+.goal-menu-item:hover {
+  background: var(--raised);
+}
+.goal-menu-item.danger {
+  color: var(--neg);
 }
 .goal-detail-empty {
   font-size: 12px;
   color: var(--faint);
   padding: 16px 0 4px;
 }
-/* 里程碑行的操作组：安排 + 删除，整体贴行右侧对齐。 */
+/* 里程碑行的操作组：新建任务 + 编辑 + 删除，整体贴行右侧对齐。
+   桌面端悬停浮现（见下方 ms-block 规则），触屏常显。 */
 .goal-task-actions {
   margin-left: auto;
   display: flex;
@@ -2278,61 +2658,388 @@ button.focus-task-expand {
   gap: 2px;
   flex-shrink: 0;
 }
-/* 「安排」弹层：挂在操作组里，右对齐弹出。 */
-.goal-schedule {
-  position: relative;
+/* 里程碑列表：卡片式纵向链，块间留呼吸的间距。 */
+.ms-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
 }
-.goal-schedule > .text-button.is-active {
+/* 里程碑卡片：行 + 可选的展开任务列表。 */
+.ms-block {
+  background: var(--panel);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+  transition: border-color 0.16s var(--ease);
+}
+.ms-block:hover {
+  border-color: var(--line);
+}
+
+/* ── 周期事项（并行目标）：新增表单、星期胶囊、本周打卡条 ─────────────
+   打卡条只在排了的星期有格子；完成 = 青绿实心，漏做 = 灰底，未来/今天 =
+   描边可点。全部走设计变量，深浅色自动适配。 */
+.habit-add {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 4px 0 12px;
+}
+.habit-add input {
+  flex: 1;
+  min-width: 140px;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 13px;
+}
+.habit-days {
+  display: flex;
+  gap: 4px;
+}
+.habit-chip {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s var(--ease), color 0.15s var(--ease), border-color 0.15s var(--ease);
+}
+.habit-chip:hover {
+  border-color: var(--accent);
+}
+.habit-chip.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+.habit-chip.static {
+  cursor: default;
+  width: 22px;
+  height: 22px;
+  font-size: 11px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--faint);
+  opacity: 0.45;
+}
+.habit-chip.static.on {
+  background: var(--accent-soft);
   color: var(--accent);
+  opacity: 1;
+  font-weight: 600;
 }
-.goal-schedule-pop {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 4px);
-  z-index: 30;
-  min-width: 148px;
+.habit-list {
+  display: grid;
+  gap: 10px;
+}
+.habit-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  background: var(--panel);
+  transition: border-color 0.16s var(--ease);
+}
+.habit-row:hover {
+  border-color: var(--line);
+}
+.habit-main {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+.habit-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.habit-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.habit-next {
+  font-size: 12px;
+  color: var(--faint);
+}
+.habit-week {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.habit-weekday {
+  display: grid;
+  justify-items: center;
+  gap: 3px;
+  opacity: 0.4;
+}
+.habit-weekday.on,
+.habit-weekday.today {
+  opacity: 1;
+}
+.habit-weekday > i {
+  font-style: normal;
+  font-size: 10px;
+  color: var(--faint);
+}
+.habit-weekday.today > i {
+  color: var(--accent);
+  font-weight: 700;
+}
+.habit-day {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 12px;
+  font-family: var(--mono);
+  cursor: pointer;
+  transition: background 0.15s var(--ease), color 0.15s var(--ease), border-color 0.15s var(--ease);
+}
+.habit-day:hover {
+  border-color: var(--accent);
+}
+.habit-day.done {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+.habit-day.missed {
+  background: var(--raised);
+  color: var(--faint);
+  border-style: dashed;
+}
+.habit-day.today {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.habit-day.off {
+  border-color: transparent;
+  background: transparent;
+  color: var(--faint);
+  cursor: default;
+}
+.habit-edit {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.habit-edit input {
+  flex: 1;
+  min-width: 120px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 13px;
+}
+.habit-edit-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+/* 悬停浮现操作组（与里程碑行同一交互）。 */
+.habit-row .goal-task-actions {
+  opacity: 0;
+  transition: opacity 0.16s var(--ease);
+}
+.habit-row:hover .goal-task-actions,
+.habit-row:focus-within .goal-task-actions {
+  opacity: 1;
+}
+@media (hover: none) {
+  .habit-row .goal-task-actions {
+    opacity: 1;
+  }
+}
+/* 当前步：青绿浅底 + 青绿描边，和 step-tag.now 呼应。 */
+.ms-block.is-current {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  box-shadow: none;
+}
+/* 悬停浮现操作组；键盘聚焦（focus-within）与触屏保持常显。 */
+.ms-block .goal-task-actions {
+  opacity: 0;
+  transition: opacity 0.16s var(--ease);
+}
+.ms-block:hover .goal-task-actions,
+.ms-block:focus-within .goal-task-actions {
+  opacity: 1;
+}
+@media (hover: none) {
+  .ms-block .goal-task-actions {
+    opacity: 1;
+  }
+}
+/* 操作组里的按钮：小号胶囊，悬停有底。 */
+.ms-block .goal-task-actions .text-button {
+  min-height: 24px;
+  padding: 0 8px;
+  font-size: 12px;
+  border-radius: 999px;
+}
+.ms-block .goal-task-actions .text-button:hover {
+  background: var(--raised);
+}
+.ms-block.is-current .goal-task-actions .text-button:hover {
+  background: var(--panel);
+}
+.ms-block .goal-task-actions .icon-button {
+  width: 26px;
+  height: 26px;
+  min-height: 26px;
+  border-radius: var(--r-sm);
+}
+/* 里程碑行：无完成勾选，左侧箭头展开任务。比清单行更紧凑。 */
+.ms-row {
+  min-height: 0;
+  padding: 10px 12px;
+  border-bottom: 0;
+  gap: 10px;
+  border-radius: var(--r-md);
+}
+.ms-caret {
+  width: 24px;
+  height: 24px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: var(--faint);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  transition:
+    color 0.16s var(--ease),
+    background 0.16s var(--ease);
+}
+.ms-caret:hover {
+  color: var(--accent);
+  background: var(--raised);
+}
+/* 里程碑行的第 N 步标签：小胶囊。 */
+.ms-row .step-tag {
+  border-radius: 999px;
+  padding: 2px 8px;
+  border-color: var(--line-soft);
+}
+/* 日期区间：日历小图标 + 文本。 */
+.ms-date {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+/* 展开的任务列表：缩进挂在里程碑卡片里，行间一点距。 */
+.ms-tasks {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 6px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.14);
+  margin: 0 8px 8px;
+  padding: 0 0 0 14px;
+  border-left: 2px solid var(--line-soft);
 }
-.goal-schedule-pop .text-button {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
+.ms-tasks .goal-detail-empty {
+  padding: 8px 4px;
+}
+/* 任务项：比清单行更轻（无分隔线、圆角、悬停浮现底）。 */
+.ms-tasks .task-row {
+  min-height: 0;
   padding: 6px 8px;
-  border-radius: 6px;
-  white-space: nowrap;
+  border-bottom: 0;
+  gap: 10px;
+  border-radius: var(--r-sm);
 }
-.goal-schedule-pop .text-button:hover {
+.ms-block:not(.is-current) .ms-tasks .task-row:hover {
   background: var(--raised);
 }
-.goal-schedule-custom {
+.ms-block.is-current .ms-tasks .task-row:hover {
+  background: var(--panel);
+}
+/* 里程碑标记（日历日程清单里）：占位对齐勾选框。 */
+.ms-mark {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+}
+/* 添加/编辑里程碑的内联表单：标题 + 起止日期一行排开。 */
+.ms-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+  margin: 8px 0 4px;
+  padding: 10px 12px;
+  background: var(--raised);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+}
+.ms-form input[type="text"],
+.ms-form input:not([type]) {
+  flex: 1;
+  min-width: 160px;
+  font: inherit;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 6px 8px;
+}
+.ms-form label {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 6px 8px;
   font-size: 12px;
   color: var(--muted);
-  border-top: 1px solid var(--line-soft);
-  margin-top: 2px;
 }
-.goal-schedule-custom input {
+.ms-form input[type="date"] {
   font: inherit;
   color: var(--ink);
-  background: var(--raised);
+  background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 4px 6px;
+  border-radius: var(--r-sm);
+  padding: 5px 8px;
 }
-/* 串行目标的当前步：整行一点青绿底色 + 左侧标线，和 step-tag.now 呼应。 */
-.task-row.is-current {
-  background: var(--accent-soft);
-  box-shadow: inset 2px 0 0 var(--accent);
+.ms-form-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.ms-form .form-error {
+  width: 100%;
+}
+/* 卡片内的行内编辑表单：与卡片边缘留距。 */
+.ms-block .ms-form {
+  margin: 0 8px 10px;
 }
 /* 今日建议：计划页顶部，每个进行中目标的下一个待办里程碑。 */
 .goal-suggest {
@@ -2358,47 +3065,45 @@ button.focus-task-expand {
   font-size: 13px;
 }
 /* 子任务列表末行的添加入口（与 demo 的 .add-task 同款）。 */
+/* 子任务列表末行的添加入口（与 demo 的 .add-task 同款）。
+   添加里程碑：虚线卡片，居中，悬停转青绿。 */
 .goal-add-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
+  gap: 6px;
   width: 100%;
   margin-top: 8px;
   padding: 10px 12px;
-  border: 0;
-  border-radius: 8px;
+  border: 1px dashed var(--line);
+  border-radius: var(--r-md);
   background: none;
   color: var(--muted);
   font-size: 13px;
   text-align: left;
-  transition: color 0.16s var(--ease);
+  transition:
+    color 0.16s var(--ease),
+    border-color 0.16s var(--ease),
+    background 0.16s var(--ease);
 }
 .goal-add-row:hover {
   color: var(--accent);
-  background: var(--raised);
+  border-color: var(--accent);
+  background: var(--accent-soft);
 }
 .step-tag {
   font-family: var(--mono);
   font-size: 10px;
   color: var(--faint);
   border: 1px solid var(--line);
-  border-radius: 4px;
-  padding: 1px 6px;
+  border-radius: 999px;
+  padding: 2px 8px;
   flex-shrink: 0;
 }
 .step-tag.now {
   color: var(--accent);
   border-color: var(--accent);
-}
-.lock {
-  width: 20px;
-  height: 20px;
-  flex: none;
-  display: grid;
-  place-items: center;
-  color: var(--faint);
-  border: 1px dashed var(--line);
-  border-radius: 6px;
+  background: var(--panel);
 }
 .task-row.is-locked .task-title {
   color: var(--faint);
@@ -2413,4 +3118,307 @@ button.focus-task-expand {
   .goal-detail {
     padding: 18px;
   }
+  .goal-steps {
+    gap: 8px;
+    padding: 10px 12px;
+  }
+  .goal-step-name {
+    display: none;
+  }
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── 记账本 ─────────────────────────────────────────────────────────────
+   与简约版 demo（design/expense-ledger-simple.html）同源：月份条复用
+   .calendar-toolbar，统计卡复用 .goal-stat；分类色只用 [data-color]
+   数据编码，主操作保持青绿一色；全部走变量，深浅色自动适配。 */
+.ledger-view {
+  min-width: 0;
+  padding-bottom: 96px; /* 给 FAB 留出滚动余量 */
+}
+.ledger-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.ledger-stats b {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ledger-stats b.is-neg {
+  color: var(--neg);
+}
+.ledger-stats b.is-pos {
+  color: var(--accent);
+}
+.ledger-listhead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin: 22px 2px 8px;
+}
+.ledger-listhead h3 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0;
+}
+.ledger-tip {
+  font-size: 12px;
+  color: var(--faint);
+}
+.ledger-dayhead {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  margin: 14px 2px 2px;
+}
+.ledger-daynet {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ledger-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0 12px;
+  margin-top: 6px;
+  font-size: 13px;
+}
+.ledger-row.is-temp {
+  opacity: 0.6; /* 乐观插入、尚未拿到服务端 id 的账目 */
+}
+.ledger-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--event-line, var(--slate-line, var(--faint)));
+}
+.ledger-cat {
+  font-weight: 600;
+  white-space: nowrap;
+}
+.ledger-note {
+  color: var(--faint);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.ledger-amt {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.ledger-amt.is-neg {
+  color: var(--neg);
+}
+.ledger-amt.is-pos {
+  color: var(--accent);
+}
+.ledger-ops {
+  display: flex;
+  flex: none;
+}
+.ledger-ops .icon-button {
+  color: var(--faint);
+}
+.ledger-ops .icon-button:hover {
+  color: var(--ink);
+}
+.ledger-empty {
+  border: 1px dashed var(--line);
+  border-radius: var(--r-lg);
+  color: var(--faint);
+  font-size: 13px;
+  text-align: center;
+  padding: 36px 16px;
+  margin-top: 14px;
+  line-height: 1.8;
+}
+.ledger-fab {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  border: 0;
+  border-radius: 999px;
+  padding: 13px 22px;
+  font-size: 15px;
+  font-weight: 700;
+  box-shadow: var(--shadow, 0 8px 24px rgb(0 0 0 / 0.12));
+  z-index: 40;
+}
+.ledger-fab:hover {
+  filter: brightness(1.06);
+}
+
+/* 记一笔：底部弹出的 sheet（原生 dialog 锚到视口底部）。 */
+.ledger-sheet {
+  margin-top: auto;
+  margin-bottom: 8px;
+  width: min(440px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
+  border: 0;
+  border-radius: 16px;
+  padding: 0;
+  color: var(--ink);
+  background: var(--panel);
+  box-shadow: 0 24px 64px rgb(20 40 35 / 0.25);
+}
+.ledger-sheet::backdrop {
+  background: rgb(20 30 24 / 0.28);
+}
+@keyframes ledger-sheet-in {
+  from {
+    transform: translateY(24px);
+    opacity: 0.6;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+.ledger-sheet[open] {
+  animation: ledger-sheet-in 0.2s var(--ease);
+}
+.ledger-sheet-body {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.ledger-sheet-body .dialog-head {
+  margin-bottom: 0;
+}
+.ledger-sheet-body .dialog-head h2 {
+  font-size: 18px;
+  margin-top: 4px;
+}
+.ledger-sheet-body .form-field {
+  margin-top: 0;
+}
+.ledger-amt-input {
+  font-size: 30px;
+  font-weight: 700;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  min-height: 38px;
+  font-family: var(--mono);
+}
+.ledger-amt-input .is-ph {
+  color: var(--faint);
+  font-weight: 400;
+}
+.ledger-seg {
+  display: flex;
+  gap: 4px;
+  background: var(--raised);
+  border-radius: 999px;
+  padding: 3px;
+  width: fit-content;
+}
+.ledger-seg button {
+  border: 0;
+  background: transparent;
+  padding: 6px 18px;
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.ledger-seg button.is-on {
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+.ledger-cats {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.ledger-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: 999px;
+  padding: 7px 12px;
+  font-size: 13px;
+  color: var(--ink);
+}
+.ledger-chip:hover {
+  background: var(--raised);
+}
+.ledger-chip.is-on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  font-weight: 600;
+}
+.ledger-chip .ledger-dot {
+  background: var(--event-line);
+}
+.ledger-keypad {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+.ledger-key {
+  height: 46px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: var(--r);
+  font-size: 17px;
+  font-weight: 600;
+  font-family: var(--mono);
+  color: var(--ink);
+}
+.ledger-key:hover {
+  background: var(--raised);
+}
+.ledger-key.is-ok {
+  grid-column: span 2;
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+  font-family: var(--sans);
+  font-size: 15px;
+}
+.ledger-key.is-ok:hover {
+  filter: brightness(1.06);
+}
+.ledger-kbd {
+  font-size: 11px;
+  color: var(--faint);
+  text-align: center;
+  margin: 0;
 }

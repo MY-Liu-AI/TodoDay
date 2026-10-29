@@ -6,7 +6,7 @@
  *  - 断网/超时/5xx：回滚本地改动并如实提示，不留下“已保存”的假象。
  */
 import { reactive } from "vue";
-import { api, ApiError, type WireGoal, type WireTask } from "./api";
+import { api, ApiError, type WireGoal, type WireGoalMilestone, type WireHabit, type WireLedgerMonth, type WireTask, type WireTx } from "./api";
 import { C } from "./copy";
 import { reorder as reorderList, dateValue, validState } from "./lib/model.js";
 
@@ -91,14 +91,52 @@ export interface AssistantLlmTestResult {
   message?: string;
 }
 
+/* ── 邮箱账单导入（原生 IMAP：邮箱地址 + 授权码） ─────────────────────────
+ * 视图里没有任何凭据字段：授权码由服务端以 AES-256-GCM 密文落库，
+ * 前端只是写入通道，服务端只回「是否已设置」掩码（authCodeSet），
+ * 与助手密钥同一套规则。 */
+export interface MailConfigView {
+  configured: boolean;
+  enabled: boolean;
+  running: boolean;
+  mailbox: string;
+  authCodeSet: boolean;
+  /* 账单来源发件人清单（| 分隔）；空 = 未配置，窗口内全部交给 Kimi 判定。 */
+  senders: string;
+  lastRunAt: string;
+  lastRunOk: boolean | null;
+  lastRunError: string;
+  lastImported: number;
+  version: number;
+}
+
+/* 保存入参：授权码留空 = 不修改，删除必须显式 clearAuthCode。
+ * senders 每次提交完整清单、整体写入。 */
+export interface MailConfigInput {
+  mailbox?: string;
+  authCode?: string;
+  clearAuthCode?: boolean;
+  senders: string;
+  version: number;
+}
+
+/* 「从邮箱发现」返回的一个发件来源：count/sample（最近主题）帮助辨认
+ * 这是账单来源还是营销来源。 */
+export interface DiscoveredSender {
+  from: string;
+  count: number;
+  sample: string;
+}
+
 /* 目标：任务的串联层。进度不落库——由挂载任务的完成情况推导，
-   这里是唯一一份目标状态，列表/详情都从这里读。 */
+   这里是唯一一份目标状态，列表/详情都从这里读。目标没有截止日期，
+   排期在挂载任务的 due 上。 */
 export interface GoalInput {
   title: string;
-  note: string;
+  goalText: string; // 目标决策·我的目标
+  acceptance: string; // 目标决策·验收标准
+  failureCost: string; // 目标决策·失败代价
   group: string; // 分组标签，"" = 未分组
-  mode: "parallel" | "sequential";
-  due: string; // "" 无排期
   status: "active" | "done" | "archived";
 }
 
@@ -142,14 +180,33 @@ export const st = reactive({
   goalsLoaded: false,
   // 最近一次软删的目标，供全局 toast 撤销。与任务共用同一交互。
   deletedGoal: null as WireGoal | null,
-  // 最近一次从目标移出的任务（任务本身不删，只解除挂载），供 toast 撤销。
-  detachedGoalTask: null as { goalId: number; taskId: string; title: string } | null,
+  // 最近一次删除的里程碑（软删，供全局 toast 撤销）。删除时其下任务解除
+  // 挂载、撤销不自动回填任务归属。
+  deletedMilestone: null as { goalId: number; milestone: WireGoalMilestone } | null,
   // 「新建目标」按钮在 App 页头、对话框在 GoalsView 里：App 只递增这个
   // 信号，GoalsView 监听后打开对话框（计数器避免重置时序问题）。
   goalsNewSeq: 0,
-  // GoalsView 详情视图激活中：App 据此隐藏页头（大标题/副标题/新建目标按钮），
-  // 详情页自带返回入口，页头重复且占地方。
+  // 日历点击里程碑标记 → 打开目标详情的信号（GoalsView 监听）。
+  goalsOpenId: 0,
+  goalsOpenSeq: 0,
+  // GoalsView 详情视图激活中：App 据此隐藏页头，详情页自带返回入口。
   goalsViewing: false,
+  // 习惯（工作区级的定期练习，独立于目标）。服务端在读取时滚动补齐未来
+  // 8 周的实例任务，所以读取这一步同时是「展开引擎」的触发点。
+  habits: [] as WireHabit[],
+  habitsLoaded: false,
+  // 记账本：当前展示月的流水（st.ledgerMonth 是这份数据对应的月份）。
+  // 三卡汇总不单独存——由列表推导（lib/ledger.js monthTotals），恒同口径。
+  txs: [] as WireTx[],
+  ledgerMonth: "",
+  ledgerLoaded: false,
+  ledgerLoading: false,
+  ledgerLoadError: "",
+  // 最近一次软删的账目，供全局 toast 撤销（与任务/目标同一交互）。
+  deletedTx: null as WireTx | null,
+  // 邮箱账单导入的配置视图（同样没有任何凭据字段）。
+  mail: null as MailConfigView | null,
+  mailLoading: false,
 });
 
 let noticeTimer = 0;
@@ -385,13 +442,14 @@ export function rememberSnapshot(item: Item) {
 function completionNotice(taskId: string): string {
   const goal = goalOfTask(taskId);
   if (!goal) return C.completed;
-  const done = goal.tasks.filter((t) => t.done || t.taskId === taskId).length;
+  const all = goal.milestones.flatMap((m) => m.tasks);
+  const done = all.filter((t) => t.done || t.taskId === taskId).length;
   return (
     C.completed +
     " · " +
     C.goalDoneProgress.replace("{title}", goal.title)
       .replace("{done}", String(done))
-      .replace("{total}", String(goal.tasks.length))
+      .replace("{total}", String(all.length))
   );
 }
 
@@ -716,6 +774,133 @@ export function clearAssistantConfig() {
 }
 registerLogoutHook(clearAssistantConfig);
 
+/* ── 邮箱账单导入（原生 IMAP） ─────────────────────────────────────────── */
+
+export async function loadMailConfig() {
+  if (!st.workspace) return;
+  st.mailLoading = true;
+  try {
+    st.mail = await api<MailConfigView>(wsPath("/mail"));
+  } catch (e) {
+    st.mail = null;
+    fail(e, C.mailLoadFailed);
+  } finally {
+    st.mailLoading = false;
+  }
+}
+
+/* 保存邮箱导入配置（邮箱地址 / 授权码 / 关键词）。授权码经服务端加密落库；
+   启用状态由 start/stop 控制，保存不改开关。 */
+export async function saveMailConfig(input: MailConfigInput, opts?: { silent?: boolean }) {
+  if (!st.workspace) return false;
+  st.mailLoading = true;
+  try {
+    const view = await api<MailConfigView>(wsPath("/mail"), { method: "PUT", body: input });
+    st.mail = view;
+    if (!opts?.silent) notify(C.mailSaved);
+    return true;
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 403) {
+      notify(C.mailOwnerOnly, "error");
+      return false;
+    }
+    fail(e, C.mailSaveFailed);
+    return false;
+  } finally {
+    st.mailLoading = false;
+  }
+}
+
+/* 测试连接 = 一次真实 IMAP 登录。测的是表单当前值（未保存也能验证），
+   留空则回退已存凭据。失败是正常结果（HTTP 仍 200），返回 {ok:false, message}。 */
+export async function testMailConnection(
+  input?: { mailbox: string; authCode: string },
+): Promise<{ ok: boolean; mailbox?: string; message?: string } | null> {
+  if (!st.workspace) return null;
+  try {
+    return await api<{ ok: boolean; mailbox?: string; message?: string }>(wsPath("/mail/test"), {
+      method: "POST",
+      body: input ?? {},
+    });
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 403) {
+      notify(C.mailOwnerOnly, "error");
+      return null;
+    }
+    fail(e, C.mailTestFailed);
+    return null;
+  }
+}
+
+/* 从邮箱发现发件人 = 一次只读 IMAP 扫描（不取正文、不标记邮件）。
+   吃的是表单当前值（未保存也能用），留空由服务端回退已存凭据。 */
+export async function discoverMailSenders(
+  input?: { mailbox: string; authCode: string },
+): Promise<{ ok: boolean; senders?: DiscoveredSender[]; message?: string } | null> {
+  if (!st.workspace) return null;
+  try {
+    return await api<{ ok: boolean; senders?: DiscoveredSender[]; message?: string }>(wsPath("/mail/discover"), {
+      method: "POST",
+      body: input ?? {},
+    });
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 403) {
+      notify(C.mailOwnerOnly, "error");
+      return null;
+    }
+    fail(e, C.mailSenderDiscoverFailed);
+    return null;
+  }
+}
+
+export async function startMailImport(): Promise<boolean> {
+  if (!st.workspace) return false;
+  try {
+    await api(wsPath("/mail/start"), { method: "POST", body: {} });
+    await loadMailConfig();
+    notify(C.mailStartedNotice);
+    return true;
+  } catch (e) {
+    if (e instanceof ApiError && e.code === "not_found") {
+      notify(C.mailSaveFirst, "error");
+      return false;
+    }
+    if (e instanceof ApiError && e.code === "no_credentials") {
+      notify(C.mailNoCredentials, "error");
+      return false;
+    }
+    if (e instanceof ApiError && e.status === 403) {
+      notify(C.mailOwnerOnly, "error");
+      return false;
+    }
+    fail(e, C.mailStartFailed);
+    return false;
+  }
+}
+
+export async function stopMailImport(): Promise<boolean> {
+  if (!st.workspace) return false;
+  try {
+    await api(wsPath("/mail/stop"), { method: "POST", body: {} });
+    await loadMailConfig();
+    notify(C.mailStoppedNotice);
+    return true;
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 403) {
+      notify(C.mailOwnerOnly, "error");
+      return false;
+    }
+    fail(e, C.mailStopFailed);
+    return false;
+  }
+}
+
+export function clearMailConfig() {
+  st.mail = null;
+  st.mailLoading = false;
+}
+registerLogoutHook(clearMailConfig);
+
 /* ── 目标（任务串联 + 进度跟踪） ───────────────────────────────────────── */
 
 export async function loadGoals(force = false) {
@@ -807,10 +992,14 @@ export function dismissDeletedGoal() {
   st.notice = "";
 }
 
-export async function attachTaskToGoal(goalId: number, taskId: string): Promise<boolean> {
+export async function attachTaskToGoal(
+  goalId: number,
+  milestoneId: number,
+  taskId: string,
+): Promise<boolean> {
   if (!st.workspace) return false;
   try {
-    const goal = await api<WireGoal>(wsPath(`/goals/${goalId}/tasks`), {
+    const goal = await api<WireGoal>(wsPath(`/goals/${goalId}/milestones/${milestoneId}/tasks`), {
       method: "POST",
       body: { taskId },
     });
@@ -827,9 +1016,10 @@ export async function attachTaskToGoal(goalId: number, taskId: string): Promise<
   }
 }
 
-/* 在目标下新建任务：先建任务（走既有幂等接口、进清单），再挂进目标。 */
+/* 在里程碑下新建任务：先建任务（走既有幂等接口、进清单），再挂进里程碑。 */
 export async function createTaskInGoal(
   goalId: number,
+  milestoneId: number,
   input: { t: string; p: number; due: number; g: string },
 ): Promise<boolean> {
   if (!st.workspace) return false;
@@ -840,7 +1030,7 @@ export async function createTaskInGoal(
       body: { t: input.t, p: input.p, due: input.due ? dateValue(input.due) : "", g: input.g, clientId },
     });
     st.items.unshift(toItem(task));
-    const ok = await attachTaskToGoal(goalId, task.id);
+    const ok = await attachTaskToGoal(goalId, milestoneId, task.id);
     if (ok) notify(C.added);
     return ok;
   } catch (e) {
@@ -851,15 +1041,12 @@ export async function createTaskInGoal(
 
 export async function detachTaskFromGoal(goalId: number, taskId: string): Promise<boolean> {
   if (!st.workspace) return false;
-  const goal = st.goals.find((g) => g.id === goalId);
-  const title = goal?.tasks.find((t) => t.taskId === taskId)?.title || "";
   try {
     const goal = await api<WireGoal>(wsPath(`/goals/${goalId}/tasks/remove`), {
       method: "POST",
       body: { taskId },
     });
     replaceGoal(goal);
-    st.detachedGoalTask = { goalId, taskId, title };
     notify(C.goalTaskDetached);
     return true;
   } catch (e) {
@@ -868,22 +1055,23 @@ export async function detachTaskFromGoal(goalId: number, taskId: string): Promis
   }
 }
 
-/* 撤销「移出目标」：任务还在清单里，重新挂回原来的目标即可。 */
-export async function restoreDetachedGoalTask() {
-  const d = st.detachedGoalTask;
-  if (!d) return;
-  st.detachedGoalTask = null;
-  if (await attachTaskToGoal(d.goalId, d.taskId)) notify(C.goalTaskAttached);
-}
-
-export function dismissDetachedGoalTask() {
-  st.detachedGoalTask = null;
-  st.notice = "";
-}
-
 /* 任务所属目标（计划页徽章用）：一条任务最多属于一个目标。 */
 export function goalOfTask(taskId: string): WireGoal | null {
-  return st.goals.find((g) => g.tasks.some((t) => t.taskId === taskId)) || null;
+  return (
+    st.goals.find((g) => g.milestones.some((m) => m.tasks.some((t) => t.taskId === taskId))) ||
+    null
+  );
+}
+
+/* 任务所属里程碑（目标页展开态用）。 */
+export function milestoneOfTask(
+  taskId: string,
+): { goal: WireGoal; milestone: WireGoalMilestone } | null {
+  for (const goal of st.goals) {
+    const milestone = goal.milestones.find((m) => m.tasks.some((t) => t.taskId === taskId));
+    if (milestone) return { goal, milestone };
+  }
+  return null;
 }
 
 /* 目标页勾选任务复用 toggleTask（任务是唯一事实来源）；完成后目标视图
@@ -893,19 +1081,202 @@ export async function toggleGoalTask(goalId: number, item: Item) {
   if (st.goalsLoaded) await loadGoals(true);
 }
 
-export async function reorderGoalTasks(goalId: number, ids: string[]): Promise<boolean> {
+/* ── 里程碑 ─────────────────────────────────────────────────────────── */
+
+/* 新建里程碑（追加到目标末尾）。 */
+export async function addMilestone(
+  goalId: number,
+  input: { title: string; start: string; due: string },
+): Promise<boolean> {
   if (!st.workspace) return false;
   try {
-    const goal = await api<WireGoal>(wsPath(`/goals/${goalId}/tasks/reorder`), {
+    const goal = await api<WireGoal>(wsPath(`/goals/${goalId}/milestones`), {
       method: "POST",
-      body: { ids },
+      body: input,
     });
     replaceGoal(goal);
+    notify(C.goalMilestoneAdded);
     return true;
   } catch (e) {
     fail(e, C.goalSaveFailed);
-    await loadGoals(true);
     return false;
+  }
+}
+
+/* 编辑里程碑标题与起止日期。409：重拉列表让本地回到服务端状态。 */
+export async function saveMilestone(
+  goalId: number,
+  milestoneId: number,
+  input: { title: string; start: string; due: string },
+  version: number,
+): Promise<boolean> {
+  if (!st.workspace) return false;
+  try {
+    const goal = await api<WireGoal>(wsPath(`/goals/${goalId}/milestones/${milestoneId}`), {
+      method: "PATCH",
+      body: { ...input, version },
+    });
+    replaceGoal(goal);
+    notify(C.goalSaved);
+    return true;
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 409) {
+      await loadGoals(true);
+      notify(C.conflict, "error");
+      return false;
+    }
+    fail(e, C.goalSaveFailed);
+    return false;
+  }
+}
+
+/* 删除里程碑：乐观移除 + 撤销提示。删除时其下任务解除挂载（任务本身
+   保留在清单里）；撤销恢复的是里程碑本身（标题与起止），任务归属不
+   自动回填（服务端语义如此，避免误占「一条任务只属于一个目标」约束）。 */
+export async function deleteMilestone(goalId: number, milestoneId: number) {
+  if (!st.workspace) return;
+  const goal = st.goals.find((g) => g.id === goalId);
+  const milestone = goal?.milestones.find((m) => m.id === milestoneId);
+  if (!goal || !milestone) return;
+  const prev = st.goals;
+  st.goals = st.goals.map((g) =>
+    g.id === goalId
+      ? { ...g, milestones: g.milestones.filter((m) => m.id !== milestoneId) }
+      : g,
+  );
+  st.deletedMilestone = { goalId, milestone };
+  try {
+    await api(wsPath(`/goals/${goalId}/milestones/${milestoneId}/delete`), { method: "POST", body: {} });
+    notify(C.goalMilestoneDeleted);
+  } catch (e) {
+    st.goals = prev;
+    st.deletedMilestone = null;
+    fail(e, C.goalSaveFailed);
+  }
+}
+
+export async function restoreDeletedMilestone() {
+  const d = st.deletedMilestone;
+  if (!d) return;
+  st.deletedMilestone = null;
+  try {
+    const goal = await api<WireGoal>(wsPath(`/goals/${d.goalId}/milestones/${d.milestone.id}/restore`), {
+      method: "POST",
+      body: {},
+    });
+    replaceGoal(goal);
+    notify(C.restored);
+  } catch (e) {
+    fail(e);
+  }
+}
+
+export function dismissDeletedMilestone() {
+  st.deletedMilestone = null;
+  st.notice = "";
+}
+
+/* ── 习惯（工作区级定期练习，独立于目标） ─────────────────────────────── */
+
+/* 读取工作区的习惯列表；服务端在读取时滚动补齐未来 8 周的实例任务，
+   所以这一步同时是「展开引擎」的触发点。409 不适用（读操作）。 */
+export async function loadHabits() {
+  if (!st.workspace) return;
+  try {
+    const data = await api<{ habits: WireHabit[] }>(wsPath("/habits"));
+    st.habits = data.habits;
+    st.habitsLoaded = true;
+  } catch (e) {
+    fail(e, C.habitLoadFailed);
+  }
+}
+
+export async function addHabit(input: { title: string; days: number[] }): Promise<boolean> {
+  if (!st.workspace) return false;
+  const clientId = "c_" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+  try {
+    await api<WireHabit>(wsPath("/habits"), {
+      method: "POST",
+      body: { title: input.title, weekdays: input.days, clientId },
+    });
+    await loadHabits();
+    await loadTasks(); // 新习惯的实例任务进清单
+    notify(C.habitAdded);
+    return true;
+  } catch (e) {
+    fail(e, C.habitSaveFailed);
+    return false;
+  }
+}
+
+/* 编辑习惯标题与重复星期（未来未完成实例随之同步/增删）。409：重拉数据
+   让本地回到服务端状态。 */
+export async function saveHabit(
+  habitId: number,
+  input: { title: string; days: number[] },
+  version: number,
+): Promise<boolean> {
+  if (!st.workspace) return false;
+  try {
+    await api<WireHabit>(wsPath(`/habits/${habitId}`), {
+      method: "PATCH",
+      body: { title: input.title, weekdays: input.days, version },
+    });
+    await loadHabits();
+    await loadTasks();
+    notify(C.habitSaved);
+    return true;
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 409) {
+      await loadHabits();
+      notify(C.conflict, "error");
+      return false;
+    }
+    fail(e, C.habitSaveFailed);
+    return false;
+  }
+}
+
+/* 删除习惯（硬删）：未来未完成的实例随之删除，历史完成实例保留为普通
+   任务。无撤销——实例是自动生成的排期，历史完成记录不受影响。 */
+export async function deleteHabit(habitId: number): Promise<boolean> {
+  if (!st.workspace) return false;
+  try {
+    await api(wsPath("/habits/delete"), {
+      method: "POST",
+      body: { ids: [habitId] },
+    });
+    st.habits = st.habits.filter((h) => h.id !== habitId);
+    await loadTasks();
+    notify(C.habitDeleted);
+    return true;
+  } catch (e) {
+    fail(e, C.habitSaveFailed);
+    return false;
+  }
+}
+
+/* 打卡条勾选实例：走任务完成端点（任务是唯一事实来源），成功后刷新
+   习惯视图与任务列表。 */
+export async function toggleHabitOccurrence(taskId: string, done: boolean, version: number) {
+  const hb = st.habits.find((h) => h.tasks.some((t) => t.taskId === taskId));
+  const occ = hb?.tasks.find((t) => t.taskId === taskId);
+  if (occ) occ.done = !done; // 乐观翻转；失败由 loadHabits 拉正
+  try {
+    await api<WireTask>(wsPath(`/tasks/${taskId}/completion`), {
+      method: "POST",
+      body: { done: !done, version },
+    });
+    await loadHabits();
+    await loadTasks();
+    if (st.statsLoaded) await refreshStats(true);
+  } catch (e) {
+    if (occ) occ.done = done;
+    if (handleConflict(e)) {
+      await loadHabits();
+      return;
+    }
+    fail(e);
   }
 }
 
@@ -933,16 +1304,167 @@ function clearGoals() {
   st.goals = [];
   st.goalsLoaded = false;
   st.deletedGoal = null;
-  st.detachedGoalTask = null;
+  st.deletedMilestone = null;
   st.goalsNewSeq = 0;
+  st.goalsOpenId = 0;
+  st.goalsOpenSeq = 0;
   st.goalsViewing = false;
 }
+
+function clearHabits() {
+  st.habits = [];
+  st.habitsLoaded = false;
+}
+registerLogoutHook(clearHabits);
 registerLogoutHook(clearGoals);
 
 /* App 页头的「新建目标」按钮： GoalsView 通过 watch 消费这个信号。 */
 export function requestNewGoal() {
   st.goalsNewSeq += 1;
 }
+
+/* 计划页日历上的里程碑标记被点击时：GoalsView 打开该目标详情。 */
+export function requestOpenGoal(id: number) {
+  st.goalsOpenId = id;
+  st.goalsOpenSeq += 1;
+}
+
+/* ── 记账本 ───────────────────────────────────────────────────────────── */
+
+export interface TxInput {
+  date: string; // YYYY-MM-DD
+  type: "exp" | "inc";
+  category: string; // 仅支出使用；收入传 ""
+  amountFen: number;
+  note: string;
+}
+
+/* 按服务端排序口径（date 倒序、同日内 id 倒序）把一笔插回列表。 */
+function insertTxSorted(tx: WireTx) {
+  const i = st.txs.findIndex((t) => t.date < tx.date || (t.date === tx.date && t.id < tx.id));
+  if (i >= 0) st.txs.splice(i, 0, tx);
+  else st.txs.push(tx);
+}
+
+/* 拉取某月流水。ledgerSeq 防竞态：连点切换月份时，只有最后一次请求的
+ * 响应允许落盘，慢响应不会把用户已切走的月份盖回来。 */
+let ledgerSeq = 0;
+export async function loadLedger(month: string, force = false) {
+  if (!st.workspace) return;
+  if (!force && st.ledgerLoaded && st.ledgerMonth === month) return;
+  const seq = ++ledgerSeq;
+  st.ledgerLoading = true;
+  st.ledgerLoadError = "";
+  try {
+    const data = await api<WireLedgerMonth>(wsPath(`/ledger?month=${month}`));
+    if (seq !== ledgerSeq) return;
+    st.txs = data.entries;
+    st.ledgerMonth = month;
+    st.ledgerLoaded = true;
+    st.online = true;
+  } catch (e) {
+    if (seq !== ledgerSeq) return;
+    st.ledgerLoadError = e instanceof ApiError && e.status === 0 ? C.loadError : C.ledgerLoadFailed;
+  } finally {
+    if (seq === ledgerSeq) st.ledgerLoading = false;
+  }
+}
+
+export async function addTx(input: TxInput): Promise<boolean> {
+  if (!st.workspace) return false;
+  const clientId = "tx_" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+  const inMonth = input.date.slice(0, 7) === st.ledgerMonth;
+  const temp: WireTx = { id: 0, ...input, version: 0, createdAt: "" };
+  if (inMonth) st.txs.unshift(temp);
+  try {
+    const tx = await api<WireTx>(wsPath("/ledger"), { method: "POST", body: { ...input, clientId } });
+    const idx = st.txs.findIndex((t) => t.id === temp.id);
+    if (idx >= 0) st.txs.splice(idx, 1);
+    if (tx.date.slice(0, 7) === st.ledgerMonth) insertTxSorted(tx);
+    notify(C.txAdded);
+    return true;
+  } catch (e) {
+    st.txs = st.txs.filter((t) => t.id !== temp.id);
+    fail(e, C.txSaveFailed);
+    return false;
+  }
+}
+
+/* 编辑账目。409 与目标同约定：服务端不带最新值返回，重拉当月对齐，
+ * 绝不静默覆盖其他设备的新修改。 */
+export async function saveTx(id: number, input: TxInput, version: number): Promise<boolean> {
+  if (!st.workspace) return false;
+  const prev = st.txs.find((t) => t.id === id);
+  const snapshot = prev ? { ...prev } : null;
+  if (prev) Object.assign(prev, input);
+  try {
+    const tx = await api<WireTx>(wsPath(`/ledger/${id}`), { method: "PATCH", body: { ...input, version } });
+    const idx = st.txs.findIndex((t) => t.id === id);
+    // 改日期可能把这笔移出当前展示月：不再属月就从列表撤下。
+    if (idx >= 0) st.txs.splice(idx, 1);
+    if (tx.date.slice(0, 7) === st.ledgerMonth) insertTxSorted(tx);
+    notify(C.txUpdated);
+    return true;
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 409) {
+      await loadLedger(st.ledgerMonth, true);
+      notify(C.conflict, "error");
+      return false;
+    }
+    if (prev && snapshot) Object.assign(prev, snapshot);
+    fail(e, C.txSaveFailed);
+    return false;
+  }
+}
+
+export async function removeTx(tx: WireTx) {
+  if (!st.workspace) return;
+  const idx = st.txs.findIndex((t) => t.id === tx.id);
+  st.deletedTx = tx;
+  if (idx >= 0) st.txs.splice(idx, 1);
+  try {
+    await api(wsPath("/ledger/delete"), { method: "POST", body: { ids: [tx.id] } });
+    notify(C.txDeleted);
+  } catch (e) {
+    if (idx >= 0) st.txs.splice(Math.min(idx, st.txs.length), 0, tx);
+    st.deletedTx = null;
+    fail(e);
+  }
+}
+
+export async function restoreDeletedTx() {
+  const tx = st.deletedTx;
+  if (!tx) return;
+  st.deletedTx = null;
+  try {
+    const data = await api<{ entries: WireTx[] }>(wsPath("/ledger/restore"), {
+      method: "POST",
+      body: { ids: [tx.id] },
+    });
+    for (const t of data.entries) {
+      if (t.date.slice(0, 7) === st.ledgerMonth) insertTxSorted(t);
+    }
+    notify(C.restored);
+  } catch (e) {
+    st.deletedTx = tx;
+    fail(e);
+  }
+}
+
+export function dismissDeletedTx() {
+  st.deletedTx = null;
+  st.notice = "";
+}
+
+function clearLedger() {
+  ledgerSeq += 1;
+  st.txs = [];
+  st.ledgerMonth = "";
+  st.ledgerLoaded = false;
+  st.ledgerLoadError = "";
+  st.deletedTx = null;
+}
+registerLogoutHook(clearLedger);
 
 /* ── 共享的错误处理 ───────────────────────────────────────────────────── */
 

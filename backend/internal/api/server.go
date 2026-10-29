@@ -14,6 +14,7 @@ import (
 
 	"tododay/internal/ai"
 	"tododay/internal/assistant"
+	"tododay/internal/mailimport"
 	"tododay/internal/secretbox"
 	"tododay/internal/store"
 )
@@ -35,6 +36,9 @@ type Server struct {
 	box *secretbox.Box
 	// assistant 内嵌运行助手连接（per-workspace）。测试/启动/停止都走它。
 	assistant *assistant.Manager
+	// mail 是邮箱账单导入（per-workspace 每日轮询）。凭据（邮箱地址 +
+	// IMAP 授权码）以密文落库，这里只持有运行循环。
+	mail *mailimport.Manager
 	// ai 是技能调用器：技能定义从文件目录加载（LoadSkills），不在代码里写死。
 	ai *ai.Invoker
 }
@@ -54,6 +58,7 @@ func NewServer(st *store.Store, staticDir string) *Server {
 		mux:        http.NewServeMux(),
 		box:        box,
 		assistant:  assistant.NewManager(st, box),
+		mail:       mailimport.NewManager(st, box),
 		ai:         ai.NewInvoker(st, box),
 	}
 	s.routes()
@@ -75,11 +80,13 @@ func (s *Server) LoadSkills(dir string) error {
 // SyncAssistants 在进程启动后恢复所有「已启用」工作区的助手连接。
 func (s *Server) SyncAssistants(ctx context.Context) {
 	s.assistant.SyncAll(ctx)
+	s.mail.SyncAll(ctx)
 }
 
 // CloseAssistants 停止全部助手连接，供进程优雅退出时调用。
 func (s *Server) CloseAssistants() {
 	s.assistant.Close()
+	s.mail.Close()
 }
 
 func (s *Server) routes() {
@@ -102,16 +109,35 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/workspaces/{wid}/focus/sessions", s.withAuth(s.withWorkspace(s.createFocusSession)))
 	s.mux.HandleFunc("GET /api/workspaces/{wid}/focus/stats", s.withAuth(s.withWorkspace(s.focusStats)))
 
-	// 目标：把任务串联成目标，进度由挂载任务的完成情况推导（不落库）。
+	// 目标：有终点的产出，统一拆解为 目标 → 里程碑 → 任务 三层，
+	// 进度由挂载任务的完成情况推导（不落库）。
 	s.mux.HandleFunc("GET /api/workspaces/{wid}/goals", s.withAuth(s.withWorkspace(s.listGoals)))
 	s.mux.HandleFunc("POST /api/workspaces/{wid}/goals", s.withAuth(s.withWorkspace(s.createGoal)))
 	s.mux.HandleFunc("PATCH /api/workspaces/{wid}/goals/{gid}", s.withAuth(s.withWorkspace(s.updateGoal)))
 	s.mux.HandleFunc("POST /api/workspaces/{wid}/goals/reorder", s.withAuth(s.withWorkspace(s.reorderGoals)))
 	s.mux.HandleFunc("POST /api/workspaces/{wid}/goals/{gid}/delete", s.withAuth(s.withWorkspace(s.deleteGoal)))
 	s.mux.HandleFunc("POST /api/workspaces/{wid}/goals/{gid}/restore", s.withAuth(s.withWorkspace(s.restoreGoal)))
-	s.mux.HandleFunc("POST /api/workspaces/{wid}/goals/{gid}/tasks", s.withAuth(s.withWorkspace(s.attachGoalTask)))
+	s.mux.HandleFunc("POST /api/workspaces/{wid}/goals/{gid}/milestones", s.withAuth(s.withWorkspace(s.createGoalMilestone)))
+	s.mux.HandleFunc("PATCH /api/workspaces/{wid}/goals/{gid}/milestones/{mid}", s.withAuth(s.withWorkspace(s.updateGoalMilestone)))
+	s.mux.HandleFunc("POST /api/workspaces/{wid}/goals/{gid}/milestones/{mid}/delete", s.withAuth(s.withWorkspace(s.deleteGoalMilestone)))
+	s.mux.HandleFunc("POST /api/workspaces/{wid}/goals/{gid}/milestones/{mid}/restore", s.withAuth(s.withWorkspace(s.restoreGoalMilestone)))
+	s.mux.HandleFunc("POST /api/workspaces/{wid}/goals/{gid}/milestones/{mid}/tasks", s.withAuth(s.withWorkspace(s.attachGoalTask)))
 	s.mux.HandleFunc("POST /api/workspaces/{wid}/goals/{gid}/tasks/remove", s.withAuth(s.withWorkspace(s.detachGoalTask)))
-	s.mux.HandleFunc("POST /api/workspaces/{wid}/goals/{gid}/tasks/reorder", s.withAuth(s.withWorkspace(s.reorderGoalTasks)))
+
+	// 习惯：工作区级的定期练习（健身、阅读），独立于目标。服务端滚动
+	// 展开成真实任务实例（未来 8 周），实例出现在计划页/日历/今天清单。
+	s.mux.HandleFunc("GET /api/workspaces/{wid}/habits", s.withAuth(s.withWorkspace(s.listHabits)))
+	s.mux.HandleFunc("POST /api/workspaces/{wid}/habits", s.withAuth(s.withWorkspace(s.createHabit)))
+	s.mux.HandleFunc("PATCH /api/workspaces/{wid}/habits/{hid}", s.withAuth(s.withWorkspace(s.updateHabit)))
+	s.mux.HandleFunc("POST /api/workspaces/{wid}/habits/delete", s.withAuth(s.withWorkspace(s.deleteHabits)))
+
+	// 记账本：每月收支流水。成员级（账目是个人数据，不设 owner 边界）；
+	// client_id 幂等创建，version 乐观并发，软删 + 恢复（撤销删除）。
+	s.mux.HandleFunc("GET /api/workspaces/{wid}/ledger", s.withAuth(s.withWorkspace(s.listLedger)))
+	s.mux.HandleFunc("POST /api/workspaces/{wid}/ledger", s.withAuth(s.withWorkspace(s.createLedgerEntry)))
+	s.mux.HandleFunc("PATCH /api/workspaces/{wid}/ledger/{eid}", s.withAuth(s.withWorkspace(s.updateLedgerEntry)))
+	s.mux.HandleFunc("POST /api/workspaces/{wid}/ledger/delete", s.withAuth(s.withWorkspace(s.deleteLedgerEntries)))
+	s.mux.HandleFunc("POST /api/workspaces/{wid}/ledger/restore", s.withAuth(s.withWorkspace(s.restoreLedgerEntries)))
 
 	// 助手配置：成员可看掩码，只有 owner 能改、能取明文凭据。
 	s.mux.HandleFunc("GET /api/workspaces/{wid}/assistant", s.withAuth(s.withWorkspace(s.getAssistantConfig)))
@@ -123,6 +149,15 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/workspaces/{wid}/assistant/test-llm", s.withAuth(s.withWorkspaceOwner(s.testAssistantLlm)))
 	s.mux.HandleFunc("POST /api/workspaces/{wid}/assistant/start", s.withAuth(s.withWorkspaceOwner(s.startAssistant)))
 	s.mux.HandleFunc("POST /api/workspaces/{wid}/assistant/stop", s.withAuth(s.withWorkspaceOwner(s.stopAssistant)))
+
+	// 邮箱账单导入（原生 IMAP）：邮箱地址 + 授权码以密文落库，
+	// 这里只持有 per-workspace 运行循环与启停端点。
+	s.mux.HandleFunc("GET /api/workspaces/{wid}/mail", s.withAuth(s.withWorkspace(s.getMailConfig)))
+	s.mux.HandleFunc("PUT /api/workspaces/{wid}/mail", s.withAuth(s.withWorkspaceOwner(s.putMailConfig)))
+	s.mux.HandleFunc("POST /api/workspaces/{wid}/mail/test", s.withAuth(s.withWorkspaceOwner(s.testMail)))
+	s.mux.HandleFunc("POST /api/workspaces/{wid}/mail/discover", s.withAuth(s.withWorkspaceOwner(s.discoverMailSenders)))
+	s.mux.HandleFunc("POST /api/workspaces/{wid}/mail/start", s.withAuth(s.withWorkspaceOwner(s.startMailImport)))
+	s.mux.HandleFunc("POST /api/workspaces/{wid}/mail/stop", s.withAuth(s.withWorkspaceOwner(s.stopMailImport)))
 
 	// AI 技能：Web 端按名调用（成员可用，每工作区每日有配额）；
 	// 技能列表成员可看，热重载仅 owner（技能是文件，改完 reload 即生效）。
