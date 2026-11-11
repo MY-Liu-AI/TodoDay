@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -48,6 +49,7 @@ func decodeOptionalJSON(r *http.Request, dst any) error {
 // mapStoreError converts store sentinel errors to HTTP responses.
 func mapStoreError(w http.ResponseWriter, err error) {
 	var ce *store.ConflictError
+	var ciu *store.CategoryInUseError
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "资源不存在")
@@ -67,6 +69,10 @@ func mapStoreError(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusConflict, map[string]any{
 			"error": "conflict", "message": "数据已被其他设备修改，请刷新后重试",
 		})
+	// 分类下还有账目，删除被挡：提示先迁移，笔数如实给出。
+	case errors.As(err, &ciu):
+		writeError(w, http.StatusConflict, "category_in_use",
+			fmt.Sprintf("该分类下还有 %d 笔账目，无法删除", ciu.Count))
 	case errors.Is(err, store.ErrUsernameTaken):
 		writeError(w, http.StatusConflict, "username_taken", "用户名已被占用")
 	case errors.Is(err, store.ErrInvalid):

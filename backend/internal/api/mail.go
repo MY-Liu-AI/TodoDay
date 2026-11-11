@@ -16,7 +16,7 @@ import (
 //	GET   配置视图（成员可见）—— 不含任何密钥：只有「是否已设置」掩码
 //	PUT   保存配置（仅 owner）—— 邮箱地址/授权码/关键词；授权码经 secretbox 加密落库
 //	POST  test（仅 owner）       —— 用表单当前值（或已存凭据）做一次 IMAP 登录验证
-//	POST  start/stop（仅 owner） —— 启停每日导入循环
+//	POST  start/stop（仅 owner） —— 启停 IDLE 主动监听（长连接，新邮件到达即导入）
 //
 // 凭据语义与助手密钥一致：授权码留空 = 不修改，删除必须显式 clearAuthCode
 // （撤销是删除不是修改，不需要主密钥）；服务端没有主密钥时拒绝存新授权码

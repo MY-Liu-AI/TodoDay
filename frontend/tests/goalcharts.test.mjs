@@ -1,6 +1,12 @@
 /* 目标列表统计图：lib/goalcharts.js 纯函数真单测 + 源码契约。
    一块图：进行中目标的里程碑甘特（排期 + 子任务进度）。数据全部来自
-   现有 API 形状，纯展示。 */
+   现有 API 形状，纯展示。
+   设计契约（2026-11-11 效率复核，见 design/goal-gantt-design.md）：
+   - 视窗 = 过去 7 天（钉死，更早的条带截到轴首）+ 未来 ≥28 天（随最远
+     截止延展）；今天稳定在轴左侧。
+   - 已完成里程碑（total>0 且 done>=total；total=0 视为未拆解）不占行，
+     折进组头 doneCount；全完成的目标整组退出（返回 null）。
+   - 逾期天数走 overdueDays 文字；刻度铺满整个视窗，日/周两种粒度。 */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -9,6 +15,7 @@ import { ganttChart } from "../src/lib/goalcharts.js";
 
 /* 2026-10-27 是周二（与 routines.test.mjs 同一今天口径）。 */
 const NOW = new Date(2026, 9, 27, 15, 0, 0).getTime();
+const D = (m, d) => new Date(2026, m - 1, d).getTime();
 
 const ms = (id, title, start, due, done, total) => ({
   id,
@@ -18,65 +25,69 @@ const ms = (id, title, start, due, done, total) => ({
   tasks: Array.from({ length: total }, (_, i) => ({ done: i < done })),
 });
 
-test("ganttChart: null when no active goals", () => {
+test("ganttChart: null when no active goals or all milestones complete", () => {
   assert.equal(ganttChart([], NOW), null);
+  const done = { id: 1, title: "全完成", milestones: [ms(11, "唯一", "2026-10-01", "2026-10-10", 1, 1)] };
+  assert.equal(ganttChart([done], NOW), null);
 });
 
-test("ganttChart: dated milestones get positioned bars with task progress", () => {
+test("ganttChart: window axis = 7d past + >=28d future, today near left", () => {
+  const g = { id: 2, title: "只有未排期", milestones: [ms(21, "没排期", "", "", 0, 1)] };
+  const out = ganttChart([g], NOW);
+  assert.equal(out.from, D(10, 20), "过去窗钉死为今天-7 天");
+  assert.ok(out.to >= D(11, 24), "未来窗至少今天+28 天");
+  assert.ok(out.todayPos > 5 && out.todayPos < 30, "今天稳定在轴左侧");
+  assert.equal(out.todayLabel, "10/27");
+  /* 全部未排期也要画出刻度尺/月份带/周末底纹/小刻度。 */
+  assert.ok(out.ticks.length >= 2);
+  assert.ok(out.months.length >= 1);
+  assert.ok(out.weekends.length >= 2);
+  assert.ok(out.marks.length >= out.ticks.length);
+});
+
+test("ganttChart: completed milestones collapse into doneCount, not rows", () => {
   const g = {
-    id: 1,
+    id: 3,
     title: "上线新版",
     milestones: [
-      ms(11, "原型", "2026-10-20", "2026-10-31", 2, 2),
-      ms(12, "开发", "2026-11-01", "2026-11-30", 1, 4),
+      ms(31, "原型", "2026-10-18", "2026-10-22", 2, 2), // 完成 → 折进组头
+      ms(32, "开发", "2026-10-25", "2026-11-30", 1, 4),
+      ms(33, "收尾", "2026-11-05", "2026-11-08", 0, 2),
     ],
   };
   const out = ganttChart([g], NOW);
-  assert.equal(out.groups.length, 1);
   const grp = out.groups[0];
-  assert.equal(grp.pct, 50); // 3/6 项子任务完成
-  const [a, b] = grp.rows;
-  assert.equal(a.kind, "range");
-  assert.equal(a.fill, 1);
-  assert.ok(a.left > 0 && a.left < 5, "最早的开始贴轴首（4% 呼吸位之内）");
-  assert.ok(a.width > 0);
-  assert.ok(b.left > a.left);
-  assert.equal(b.fill, 0.25);
-  assert.match(a.dateText, /10\/20/);
-  // 轴：九个刻度按时间顺序（M/d 字符串不能直接字典序比，要拆数值）。
-  assert.equal(out.ticks.length, 9);
-  const ord = out.ticks.map((t) => t.label.split("/").map(Number));
-  for (let i = 1; i < ord.length; i++) {
-    const [pm, pd] = ord[i - 1];
-    const [m, d] = ord[i];
-    assert.ok(m > pm || (m === pm && d > pd), `刻度应递增：${out.ticks[i - 1].label} → ${out.ticks[i].label}`);
-  }
-  // 今天在轴内（10/20 起 41 天，含两端 pad）。
-  assert.ok(out.todayPos > 0 && out.todayPos < 100);
-  // 刻度从今天起排：首刻度 = 今天（与今天线同位）、尾刻度贴轴尾（100%，
-  // 进度列左侧）；间距均匀；今天前的旧日期不再出现在刻度上。
-  assert.equal(out.ticks[0].label, "10/27");
-  assert.equal(out.ticks[0].pos, out.todayPos);
-  assert.equal(out.ticks[8].pos, 100);
-  const posGaps = out.ticks.slice(1).map((t, i) => t.pos - out.ticks[i].pos);
-  const meanGap = posGaps.reduce((a, b) => a + b, 0) / posGaps.length;
-  for (const g of posGaps) assert.ok(Math.abs(g - meanGap) < 0.05, "刻度位置应均匀分布");
-  // 任何刻度都不早于今天。
-  const todayOrd = out.ticks[0].label.split("/").map(Number);
-  for (const t of out.ticks) {
-    const [m, d] = t.label.split("/").map(Number);
-    assert.ok(m > todayOrd[0] || (m === todayOrd[0] && d >= todayOrd[1]), `刻度不应早于今天：${t.label}`);
-  }
+  assert.equal(grp.doneCount, 1);
+  assert.deepEqual(grp.rows.map((r) => r.title), ["开发", "收尾"]);
+  /* 组进度含已完成里程碑的任务（3/8）。 */
+  assert.equal(grp.pct, 38);
+  /* 开发：不截断（10/25 在过去窗内）、不逾期（11/30 在未来）、进度 1/4。 */
+  const dev = grp.rows[0];
+  assert.equal(dev.clipPast, false);
+  assert.equal(dev.overdueDays, null);
+  assert.equal(dev.fill, 0.25);
+  assert.match(dev.dateText, /10\/25 – 11\/30/);
+});
+
+test("ganttChart: bars reaching before the 7d past window clip to axis start", () => {
+  const g = { id: 4, title: "逾期", milestones: [ms(41, "逾期两周", "2026-10-05", "2026-10-13", 0, 1)] };
+  const out = ganttChart([g], NOW);
+  const r = out.groups[0].rows[0];
+  assert.equal(r.clipPast, true);
+  assert.equal(r.left, 0);
+  assert.ok(r.width >= 0.8, "截断后保留最小可见宽度");
+  assert.equal(r.overdueDays, 14);
+  assert.match(r.dateText, /10\/5 – 10\/13/);
 });
 
 test("ganttChart: single-sided dates become open bars, undated stays a chip", () => {
   const g = {
-    id: 2,
+    id: 5,
     title: "半排期",
     milestones: [
-      ms(21, "已开始", "2026-10-25", "", 0, 1),
-      ms(22, "只定了截止", "", "2026-11-20", 1, 1),
-      ms(23, "没排期", "", "", 0, 2),
+      ms(51, "已开始", "2026-10-25", "", 0, 1),
+      ms(52, "只定了截止", "", "2026-11-20", 0, 1),
+      ms(53, "没排期", "", "", 0, 2),
     ],
   };
   const rows = ganttChart([g], NOW).groups[0].rows;
@@ -89,47 +100,69 @@ test("ganttChart: single-sided dates become open bars, undated stays a chip", ()
   assert.equal(rows[2].width, 0);
 });
 
-test("ganttChart: today outside the axis is not drawn", () => {
-  const far = {
-    id: 3,
-    title: "明年的事",
-    milestones: [ms(31, "阶段一", "2027-03-01", "2027-03-31", 0, 1)],
-  };
-  assert.equal(ganttChart([far], NOW).todayPos, null);
-  // 轴内目标则画线。
-  const near = { ...far, milestones: [ms(32, "本周", "2026-10-26", "2026-11-08", 0, 1)] };
-  assert.ok(ganttChart([near], NOW).todayPos !== null);
-});
-
-test("ganttChart: tiny ranges are padded so bars stay readable", () => {
-  const g = {
-    id: 4,
-    title: "两天冲刺",
-    milestones: [ms(41, "冲刺", "2026-10-27", "2026-10-28", 0, 1)],
-  };
+test("ganttChart: future axis extends to the furthest due date", () => {
+  const g = { id: 6, title: "明年的事", milestones: [ms(61, "阶段一", "2027-03-01", "2027-03-31", 0, 1)] };
   const out = ganttChart([g], NOW);
-  // pad 后轴 ≥14 天：单个 2 天的条只占很小一段，但不越界。
-  const row = out.groups[0].rows[0];
-  assert.ok(row.left >= 0 && row.left <= 100);
-  assert.ok(row.width >= 0.8);
-  assert.ok(row.left + row.width <= 100);
+  /* 轴尾越过 3/31（含呼吸位），今天被挤到极左侧但不消失。 */
+  assert.ok(out.to >= D(4, 1));
+  assert.ok(out.todayPos > 0 && out.todayPos < 10);
+  /* 刻度仍铺满全窗且有序。 */
+  assert.ok(out.ticks.length >= 2);
+  for (let i = 1; i < out.ticks.length; i++) assert.ok(out.ticks[i].pos > out.ticks[i - 1].pos);
 });
 
-test("ganttChart: marks the current step like the detail view", () => {
+test("ganttChart: day ticks are evenly spaced from the axis start, capped at 16", () => {
+  const g = { id: 7, title: "长轴", milestones: [ms(71, "长", "2026-10-20", "2026-12-15", 0, 1)] };
+  const out = ganttChart([g], NOW);
+  /* span ≈ 59 天 → 步长 5（59/5 ≤ 16，59/3 > 16），锚定轴首、间距恒定。 */
+  assert.ok(out.ticks.length <= 16);
+  assert.equal(out.ticks[0].label, "10/20");
+  assert.equal(out.ticks[0].pos, 0);
+  assert.equal(out.ticks[1].label, "10/25");
+  const gaps = out.ticks.slice(1).map((t, i) => t.pos - out.ticks[i].pos);
+  for (const gp of gaps) assert.ok(Math.abs(gp - gaps[0]) < 0.2, "刻度位置应均匀分布");
+  /* 周一保留 week 标记（网格线略深）。 */
+  assert.ok(out.ticks.some((t) => t.week));
+});
+
+test("ganttChart: week granularity takes Mondays only, no weekend shading", () => {
+  const g = { id: 8, title: "周刻度", milestones: [ms(81, "长", "2026-10-20", "2026-12-15", 0, 1)] };
+  const out = ganttChart([g], NOW, 0, "week");
+  assert.ok(out.ticks.length >= 4);
+  for (const t of out.ticks) assert.ok(t.week, "周粒度只取周一");
+  assert.equal(out.weekends.length, 0, "周末底纹仅日粒度");
+  assert.match(out.ticks[0].label, /10\/26/);
+});
+
+test("ganttChart: today tab clash suppression follows real track width", () => {
+  const g = { id: 9, title: "撞签", milestones: [ms(91, "长", "2026-10-20", "2026-12-15", 0, 1)] };
+  const wide = ganttChart([g], NOW, 900);
+  /* 今天 ~11.9%：10/25（8.5%）落进尺签脚印被抑制，11/4（25.4%）不受影响。 */
+  assert.equal(wide.ticks.find((t) => t.label === "10/25").clash, true);
+  assert.equal(wide.ticks.find((t) => t.label === "11/4").clash, false);
+  assert.ok(wide.todayTabPos >= 0 && wide.todayTabPos <= 100);
+  /* trackPx 未知时不抑制（组件量到后重算）。 */
+  const unknown = ganttChart([g], NOW);
+  assert.ok(unknown.ticks.every((t) => !t.clash));
+  assert.equal(unknown.todayTabPos, unknown.todayPos);
+});
+
+test("ganttChart: marks the current step among unfinished rows", () => {
   const g = {
-    id: 5,
+    id: 10,
     title: "三步走",
     milestones: [
-      ms(51, "第一步", "", "", 1, 1), // 完成
-      ms(52, "第二步", "", "", 0, 2), // 有未完成 → 当前步
-      ms(53, "第三步", "", "", 0, 1), // 后面锁着
+      ms(101, "第一步", "", "", 1, 1), // 完成 → 过滤
+      ms(102, "第二步", "", "", 0, 2), // 当前步
+      ms(103, "第三步", "", "", 0, 1),
     ],
   };
   const rows = ganttChart([g], NOW).groups[0].rows;
-  assert.deepEqual(rows.map((r) => r.current), [false, true, false]);
-  // 全部完成的里程碑不再标记当前步。
-  const done = { ...g, milestones: [ms(54, "唯一步", "", "", 2, 2)] };
-  assert.equal(ganttChart([done], NOW).groups[0].rows[0].current, false);
+  assert.deepEqual(rows.map((r) => r.title), ["第二步", "第三步"]);
+  assert.deepEqual(rows.map((r) => r.current), [true, false]);
+  /* 全部完成的里程碑不再标记当前步（整组已退出）。 */
+  const allDone = { id: 11, title: "做完", milestones: [ms(111, "唯一", "", "", 2, 2)] };
+  assert.equal(ganttChart([allDone], NOW), null);
 });
 
 /* ── 源码契约 ─────────────────────────────────────────────── */
@@ -146,23 +179,42 @@ test("goals list no longer renders the three stat blocks", () => {
 
 test("goals list renders the gantt chart section", () => {
   assert.match(view, /ganttChart\(activeGoals/);
-  assert.match(view, /\['gantt-bar', row\.kind\]/);
+  assert.match(view, /\['gantt-bar', row\.kind, \{ 'clip-past': row\.clipPast \}\]/);
   assert.match(view, /C\.goalChartGanttTitle/);
   assert.doesNotMatch(view, /checkinChart|checkin-cell/, "逐周打卡图已下线（习惯页用本周打卡条替代）");
-  // 精致化后的甘特结构：画布 + 连续网格层/今天线 + 三列行（标签/轨/元信息）。
-  assert.match(view, /class="gantt-canvas"/);
-  assert.match(view, /class="gantt-grid"/);
-  assert.match(view, /class="gantt-row-meta"/);
-  assert.match(view, /gantt-current-dot/);
-  // 行末只留 done/total（日期只进悬停提示）。
-  assert.match(view, /\{\{ row\.kind === "undated" \? C\.goalChartUndated : `\$\{row\.done\}\/\$\{row\.total\}` \}\}/);
-  assert.doesNotMatch(view, /gantt-bar-text/, "条内文字已挪到元信息列");
+  /* 视窗式刻度尺：月份带 + 小刻度 + 日/周标签 + 今天尺签。 */
+  assert.match(view, /class="gantt-ruler"/);
+  assert.match(view, /class="gantt-months"/);
+  assert.match(view, /class="gantt-tick-mark"/);
+  assert.match(view, /class="gantt-today-tab"/);
+  assert.match(view, /v-show="!t\.clash"/, "尺签脚印内的刻度标签整枚隐藏");
+  assert.match(view, /gantt\.todayTabPos/);
+  /* 参考层：周末底纹（日粒度）+ 网格线（周一加深）+ 今天线。 */
+  assert.match(view, /class="gantt-weekend"/);
+  assert.match(view, /class="gantt-gridline"/);
+  assert.match(view, /\{ 'is-week': t\.week \}/);
+  /* 行：逾期元信息小签 + 过去窗截断虚线 + 组头「已完成 n 项」小签。 */
+  assert.match(view, /class="gantt-late"/);
+  assert.match(view, /\{ 'clip-past': row\.clipPast \}/);
+  assert.match(view, /class="gantt-done-chip"/);
+  /* 粒度切换（日/周）。 */
+  assert.match(view, /ganttGran = 'day'/);
+  assert.match(view, /ganttGran = 'week'/);
+  assert.match(view, /C\.goalChartGranDay/);
+  assert.match(view, /C\.goalChartGranWeek/);
+  /* 刻度/尺签按时间轨实际像素宽换算（clash、tab 位置），量宽走
+     ResizeObserver；今天线永远是 bare span，不带浮动标签。 */
+  assert.match(view, /ganttChart\(activeGoals\.value, Date\.now\(\), ganttTrackPx\.value, ganttGran\.value\)/);
+  assert.match(view, /ResizeObserver/);
+  assert.doesNotMatch(view, /isTodayTick/, "「首刻度即今天」实现已随视窗轴下线");
+  assert.doesNotMatch(view, /<em>\{\{ C\.goalChartToday \}\}<\/em>/, "浮动今天标签已下线");
 });
 
 test("copy has the chart strings and no dead stat keys", () => {
   for (const key of [
     "goalChartGanttTitle", "goalChartGanttEmpty",
     "goalChartUndated", "goalChartLoading", "goalChartToday", "goalCurrentStepShort",
+    "goalChartGranDay", "goalChartGranWeek", "goalChartDoneChip", "goalChartOverdue",
   ]) {
     assert.match(copy, new RegExp(`\\b${key}:`), `copy.ts 缺少 ${key}`);
   }
@@ -178,28 +230,38 @@ test("planner.css has chart styles on CSS variables (light/dark both covered)", 
   for (const cls of [
     ".gantt-canvas {", ".gantt-grid {", ".gantt-bar {", ".gantt-fill {",
     ".gantt-today {", ".gantt-row-meta {", ".gantt-current-dot {",
+    ".gantt-ruler {", ".gantt-month {", ".gantt-tick-mark {", ".gantt-tick {",
+    ".gantt-today-tab {", ".gantt-weekend {", ".gantt-gridline {",
+    ".gantt-done-chip {", ".gantt-late {",
   ]) {
     assert.ok(css.includes(cls), `planner.css 缺少 ${cls}`);
   }
-  // 网格层与三列行共用同一套列宽变量，今天线/条才能对齐；无边距画布，无 14px 偏移。
+  /* 刻度尺与三列行共用同一套列宽变量，今天线/条才能对齐；参考层顶对齐
+     刻度尺高度变量。 */
   assert.match(css, /grid-template-columns: var\(--gantt-label\) 1fr var\(--gantt-meta\)/);
   assert.match(css, /left: calc\(var\(--gantt-label\) \+ var\(--gantt-gap\)\)/);
-  // 无边框泳道式布局：画布无面板底/边框/内边距，甘特区不再渲染区段标题。
-  const canvas = css.slice(css.indexOf(".gantt-canvas {"), css.indexOf(".gantt-ticks {"));
+  assert.match(css, /top: var\(--gantt-ruler-h\)/);
+  assert.match(css, /\.gantt-ruler::after/);
+  /* 无边框泳道式画布；周末底纹浅色/深色两套。 */
+  const canvas = css.slice(css.indexOf(".gantt-canvas {"), css.indexOf(".gantt-ruler {"));
   assert.doesNotMatch(canvas, /background|border|border-radius|padding: 14/);
-  const ganttSection = view.slice(view.indexOf('class="goal-chart"'), view.indexOf('class="section-heading"'));
-  assert.doesNotMatch(ganttSection, /section-heading/, "甘特区的标题与分隔线已删除");
-  // 完成度右对齐成列；时间轴基线拉通整行（左标签列、右完成度列两端对齐）。
+  assert.match(canvas, /--gantt-weekend/);
+  assert.match(css, /:root\[data-theme="dark"\] \.gantt-canvas \{[^}]*--gantt-weekend/);
+  /* 逾期走既有 --neg 状态 token，不新增装饰色。 */
+  assert.match(css, /\.gantt-late \{[^}]*var\(--neg\)/);
+  /* 完成度右对齐成列。 */
   const metaBlock = css.slice(css.indexOf(".gantt-row-meta {"), css.indexOf(".goals-empty {"));
   assert.match(metaBlock, /text-align: right/);
-  assert.match(css, /\.gantt-ticks::after/);
-  // 刻度轨契约：span 到第 3 列后收回元信息列、只留 40px——尾刻度落在
-  // 时间轨右缘 +40px，紧邻进度列又不与之对齐；尾刻度与中间刻度同为中心对位。
-  assert.match(css, /\.gantt-ticks-track \{[^}]*grid-column: 2 \/ 4;/);
-  assert.match(css, /margin-right: calc\(var\(--gantt-meta\) \+ var\(--gantt-gap\) - 40px\)/);
-  assert.doesNotMatch(css, /\.gantt-tick:last-child/, "尾刻度无特殊对位规则");
-  // 被精致化移除的旧样式不再回来。
-  assert.ok(!css.includes(".gantt-bar-text"), "条内文字样式已删");
+  /* 贴轴首/轴尾刻度对位规则。 */
+  assert.match(css, /\.gantt-tick\.is-start/);
+  assert.match(css, /\.gantt-tick\.is-end/);
+  /* 「今天刻度」与浮动标签的旧实现不再回来。 */
+  assert.doesNotMatch(css, /\.gantt-tick\.is-today/);
+  assert.doesNotMatch(css, /\.gantt-today em/);
+  /* 刻度轨不再伸进元信息列。 */
+  assert.doesNotMatch(css, /margin-right: calc\(var\(--gantt-meta\)/);
+  /* 条带/截断样式在变量上。 */
   const block = css.slice(css.indexOf(".gantt-bar {"), css.indexOf(".gantt-fill {"));
   assert.match(block, /var\(--/);
+  assert.match(css, /\.gantt-bar\.clip-past/);
 });

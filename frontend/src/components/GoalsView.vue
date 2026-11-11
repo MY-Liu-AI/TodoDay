@@ -8,6 +8,7 @@
    任务的完成情况推导；里程碑按顺序解锁（锁定只是默认顺序，服务端不
    强制）。定期重复的练习（健身/阅读这类）在独立的「习惯」模块。 */
 import { computed, onMounted, onUnmounted, onUpdated, ref, watch } from "vue";
+import type { ComponentPublicInstance } from "vue";
 import { C } from "../copy";
 import {
   st,
@@ -71,11 +72,17 @@ function bindStrategyP(key: string) {
 }
 
 function refreshStrategy() {
-  const next = new Map(strategyOverflow.value);
+  /* 无变化不赋值：strategyOverflow 被模板读取，onUpdated 里无条件换引用
+     会触发「渲染 → updated → 赋值 → 再渲染」的自激递归（Vue 直接报
+     Maximum recursive updates 并中断补丁——线上表现为点修改弹窗不出现、
+     返回列表后才冒出来）。只有溢出状态真的变化才写。 */
+  const next = new Map<string, boolean>();
   for (const [key, el] of strategyEls) {
     if (!el.classList.contains("is-clamped")) continue;
     next.set(key, el.scrollHeight > el.clientHeight + 2);
   }
+  const prev = strategyOverflow.value;
+  if (prev.size === next.size && [...next].every(([k, v]) => prev.get(k) === v)) return;
   strategyOverflow.value = next;
 }
 
@@ -201,9 +208,77 @@ function msDateText(m: WireGoalMilestone): string {
 
 /* ── 列表页统计图：里程碑甘特（替代原三格数字块） ─────────────────────
    只统计进行中的目标；数据全部来自现有 API（里程碑），纯展示、不改任何
-   服务端状态。 */
+   服务端状态。
+   设计见 design/goal-gantt-design.md：视窗 = 过去 7 天 + 未来 ≥28 天
+   （今天稳定在轴左侧）；已完成里程碑折进组头不占行；更早的条带左缘
+   虚线截断，逾期天数走文字。刻度粒度可切日/周。 */
 
-const gantt = computed(() => ganttChart(activeGoals.value));
+/* 刻度数量/步长按时间轨实际像素宽与粒度算（防标签重叠、防尺签撞标签）。
+   画布只在甘特视图渲染（ref 回调在出现/消失时各调一次），出现时量一次
+   并挂 ResizeObserver，随视口变化再校正。 */
+const ganttCanvasEl = ref<HTMLElement | null>(null);
+const ganttTrackPx = ref(0);
+let ganttRO: ResizeObserver | null = null;
+function measureGanttTrack() {
+  const track = ganttCanvasEl.value?.querySelector(".gantt-track");
+  ganttTrackPx.value = track ? track.clientWidth : 0;
+}
+function setGanttCanvas(el: Element | ComponentPublicInstance | null) {
+  ganttRO?.disconnect();
+  ganttRO = null;
+  const canvas = el as HTMLElement | null;
+  ganttCanvasEl.value = canvas;
+  if (canvas) {
+    measureGanttTrack();
+    ganttRO = new ResizeObserver(measureGanttTrack);
+    ganttRO.observe(canvas);
+  }
+}
+onUnmounted(() => ganttRO?.disconnect());
+
+const ganttGran = ref<"day" | "week">("day");
+const gantt = computed(() => ganttChart(activeGoals.value, Date.now(), ganttTrackPx.value, ganttGran.value));
+
+/* 刻度对位：贴轴首的左对齐、贴轴尾的右对齐、居中的保持中心对位——
+   任何屏宽文字都不溢出画布（画布 overflow:hidden 会把探出部分裁成
+   半张脸）。与「今天 M/d」尺签同位（lib 按轨宽换算的脚印）的刻度
+   由模板隐藏（v-show="!t.clash"），避免同位双重文字。 */
+interface GanttTick {
+  pos: number;
+  label: string;
+  week: boolean;
+  clash: boolean;
+}
+interface GanttRow {
+  id: number;
+  title: string;
+  kind: string;
+  start: number | null;
+  end: number | null;
+  left: number;
+  width: number;
+  fill: number;
+  dateText: string;
+  done: number;
+  total: number;
+  current: boolean;
+  clipPast: boolean;
+  overdueDays: number | null;
+}
+function tickClass(t: GanttTick): Record<string, boolean> {
+  return {
+    "gantt-tick": true,
+    "is-week": t.week,
+    "is-start": t.pos <= 0.5,
+    "is-end": t.pos >= 99.5,
+  };
+}
+/* 条带原生提示：标题 · 起止 · 完成度 ·（逾期时）逾期天数。 */
+function ganttBarTitle(row: GanttRow): string {
+  const parts = [row.title, row.dateText, `${row.done}/${row.total}`];
+  if (row.overdueDays !== null) parts.push(C.goalChartOverdue.replace("{n}", String(row.overdueDays)));
+  return parts.join(" · ");
+}
 
 /* ── 里程碑操作 ───────────────────────────────────────────────────────── */
 
@@ -633,37 +708,85 @@ function ringOffset(g: WireGoal): number {
           {{ label }}
         </button>
       </div>
+      <div v-if="view === 'gantt'" class="view-switch gantt-gran" aria-label="gantt-granularity">
+        <button
+          :aria-pressed="ganttGran === 'day'"
+          :class="ganttGran === 'day' ? 'is-active' : ''"
+          @click="ganttGran = 'day'"
+        >
+          {{ C.goalChartGranDay }}
+        </button>
+        <button
+          :aria-pressed="ganttGran === 'week'"
+          :class="ganttGran === 'week' ? 'is-active' : ''"
+          @click="ganttGran = 'week'"
+        >
+          {{ C.goalChartGranWeek }}
+        </button>
+      </div>
       <button class="primary-button workspace-cta new-goal" @click="requestNewGoal">
         <Icon name="plus" />
         {{ C.goalNew }}
       </button>
     </div>
 
-    <!-- 里程碑甘特图：所有进行中目标的里程碑排期与进度。
-         无边框泳道式布局：无区段标题，刻度行自带时间轴基线，
-         行底线收节奏，目标组之间用留白分隔。 -->
+    <!-- 里程碑甘特图：所有进行中目标的未完成里程碑排期与进度。
+         视窗 = 过去 7 天 + 未来 ≥28 天（今天稳定在轴左侧）；已完成里程碑
+         折进组头小签不占行；无边框泳道式布局：刻度尺（月份带 + 日/周
+         刻度）铺满视窗，参考层（周末底纹/网格线/今天线）与条带同源对齐。 -->
     <section v-if="view === 'gantt'" class="goal-chart" :aria-label="C.goalChartGanttTitle">
       <template v-if="gantt">
         <div class="gantt">
-          <div class="gantt-canvas">
-            <!-- 刻度行：三列与里程碑行一致；刻度轨 = 时间轨 + 40px，
-                 刻度从今天起均匀分布（今天前不标日期），结尾刻度落在
-                 时间轨右缘 +40px、紧邻进度列；行下沿拉通成时间轴基线。 -->
-            <div class="gantt-ticks" aria-hidden="true">
-              <span class="gantt-ticks-track">
-                <span v-for="t in gantt.ticks" :key="t.pos" class="gantt-tick" :style="{ left: t.pos + '%' }">{{ t.label }}</span>
-              </span>
+          <div :ref="setGanttCanvas" class="gantt-canvas">
+            <!-- 刻度尺：三列与里程碑行一致；月份带与刻度行的中间列都是
+                 时间轨本身——刻度、网格线、条带、今天线共用同一坐标轴
+                 （同一百分比 = 同一像素）。贴轴首/轴尾的刻度标签改左/右
+                 对位，任何屏宽都不溢出。 -->
+            <div class="gantt-ruler" aria-hidden="true">
+              <div class="gantt-months">
+                <span
+                  v-for="m in gantt.months"
+                  :key="m.pos"
+                  class="gantt-month"
+                  :style="{ left: m.pos + '%', width: m.width + '%' }"
+                >{{ m.label }}</span>
+              </div>
+              <div class="gantt-ticks">
+                <span class="gantt-ticks-track">
+                  <span v-for="p in gantt.marks" :key="'m' + p" class="gantt-tick-mark" :style="{ left: p + '%' }" />
+                  <span
+                    v-for="t in gantt.ticks"
+                    :key="t.pos"
+                    v-show="!t.clash"
+                    :class="tickClass(t)"
+                    :style="{ left: t.pos + '%' }"
+                  >{{ t.label }}</span>
+                  <span
+                    v-if="gantt.todayPos !== null"
+                    class="gantt-today-tab"
+                    :style="{ left: gantt.todayTabPos + '%' }"
+                  >{{ C.goalChartToday }} {{ gantt.todayLabel }}</span>
+                </span>
+              </div>
             </div>
-            <!-- 今天线定位层：与时间轨同宽同高，浮在所有行之上。
-                 内部竖网格线已下线——刻度 + 今天线足够定位。 -->
+            <!-- 参考层：位置 = 中间列（标签列 + 间距之后，元信息列 + 间距
+                 之前），顶部对齐刻度尺基线，底部收在内容底边。周末底纹仅
+                 日粒度；周一的网格线略深。 -->
             <div class="gantt-grid" aria-hidden="true">
-              <span v-if="gantt.todayPos !== null" class="gantt-today" :style="{ left: gantt.todayPos + '%' }">
-                <em>{{ C.goalChartToday }}</em>
-              </span>
+              <span v-for="w in gantt.weekends" :key="w.pos" class="gantt-weekend" :style="{ left: w.pos + '%', width: w.width + '%' }" />
+              <span
+                v-for="t in gantt.ticks"
+                :key="t.pos"
+                class="gantt-gridline"
+                :class="{ 'is-week': t.week }"
+                :style="{ left: t.pos + '%' }"
+              />
+              <span v-if="gantt.todayPos !== null" class="gantt-today" :style="{ left: gantt.todayPos + '%' }" />
             </div>
             <div v-for="grp in gantt.groups" :key="grp.id" class="gantt-goal">
               <header class="gantt-goal-head">
                 <span class="gantt-goal-title">{{ grp.title }}</span>
+                <span v-if="grp.doneCount" class="gantt-done-chip">{{ C.goalChartDoneChip.replace("{n}", String(grp.doneCount)) }}</span>
                 <span class="gantt-goal-pct">{{ grp.pct }}{{ C.goalProgressUnit }}</span>
               </header>
               <div v-for="row in grp.rows" :key="row.id" class="gantt-row">
@@ -673,14 +796,19 @@ function ringOffset(g: WireGoal): number {
                 <div class="gantt-track">
                   <span
                     v-if="row.kind !== 'undated'"
-                    :class="['gantt-bar', row.kind]"
+                    :class="['gantt-bar', row.kind, { 'clip-past': row.clipPast }]"
                     :style="{ left: row.left + '%', width: row.width + '%' }"
-                    :title="`${row.title} · ${row.dateText} · ${row.done}/${row.total}`"
+                    :title="ganttBarTitle(row)"
                   >
                     <span class="gantt-fill" :style="{ width: row.fill * 100 + '%' }" />
                   </span>
                 </div>
-                <span class="gantt-row-meta">{{ row.kind === "undated" ? C.goalChartUndated : `${row.done}/${row.total}` }}</span>
+                <span class="gantt-row-meta">
+                  <template v-if="row.kind === 'undated'">{{ C.goalChartUndated }}</template>
+                  <template v-else>
+                    {{ row.done }}/{{ row.total }}<template v-if="row.overdueDays !== null"> · <em class="gantt-late">{{ C.goalChartOverdue.replace("{n}", String(row.overdueDays)) }}</em></template>
+                  </template>
+                </span>
               </div>
             </div>
           </div>

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"testing"
 )
@@ -238,6 +239,109 @@ func TestLedgerBudgetCrossWorkspaceDenied(t *testing.T) {
 		{"GET", wu(widB) + "/ledger/budgets", nil},
 		{"PUT", wu(widB) + "/ledger/budgets", map[string]any{"category": "餐饮", "amountFen": 100}},
 		{"DELETE", wu(widB) + "/ledger/budgets/%E9%A4%90%E9%A5%AE", nil},
+	}
+	for _, tc := range cases {
+		resp, _ := e.do(tc.method, tc.path, tc.body)
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("入侵者 %s %s 应 403，得到 %d", tc.method, tc.path, resp.StatusCode)
+		}
+	}
+}
+
+// 分类体系：首次 GET 播种默认六分类；增/改名/删响应都回全量列表；
+// 改名级联流水与预算；有流水时删除 409 category_in_use；再删 404。
+func TestLedgerCategoryLifecycle(t *testing.T) {
+	e := newTestEnv(t)
+	e.register("cat-user", "password123")
+	wid := e.wid()
+
+	// 首次读取即播种默认六分类（含「其他」）。
+	resp, out := e.do("GET", wu(wid)+"/ledger/categories", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get: %d", resp.StatusCode)
+	}
+	cats := out["categories"].([]any)
+	if len(cats) != 6 || cats[1].(map[string]any)["name"] != "交通" || cats[5].(map[string]any)["name"] != "其他" {
+		t.Fatalf("默认六分类不符：%v", out)
+	}
+	foodID := cats[0].(map[string]any)["id"].(float64)
+
+	// 新增：响应回全量列表（7 个）；重名（含空白）400。
+	resp, out = e.do("POST", wu(wid)+"/ledger/categories", map[string]any{"name": "医疗"})
+	if resp.StatusCode != http.StatusOK || len(out["categories"].([]any)) != 7 {
+		t.Fatalf("add: %d %v", resp.StatusCode, out)
+	}
+	resp, _ = e.do("POST", wu(wid)+"/ledger/categories", map[string]any{"name": "  餐饮 "})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("重名应 400，得到 %d", resp.StatusCode)
+	}
+
+	// 造一笔餐饮流水 + 一条餐饮预算，随后改名：两者一起级联。
+	resp, _ = e.do("POST", wu(wid)+"/ledger", map[string]any{
+		"date": "2026-10-26", "type": "exp", "category": "餐饮", "amountFen": 1000,
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create entry: %d", resp.StatusCode)
+	}
+	e.do("PUT", wu(wid)+"/ledger/budgets", map[string]any{"category": "餐饮", "amountFen": 300000})
+
+	resp, out = e.do("PATCH", wu(wid)+fmt.Sprintf("/ledger/categories/%d", int64(foodID)), map[string]any{"name": "吃饭"})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("rename: %d", resp.StatusCode)
+	}
+	resp, out = e.do("GET", wu(wid)+"/ledger?month=2026-10", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("list ledger: %d", resp.StatusCode)
+	}
+	entries := out["entries"].([]any)
+	if len(entries) != 1 || entries[0].(map[string]any)["category"] != "吃饭" {
+		t.Fatalf("流水应级联改名：%v", out)
+	}
+	resp, out = e.do("GET", wu(wid)+"/ledger/budgets", nil)
+	budgets := out["budgets"].([]any)
+	if len(budgets) != 1 || budgets[0].(map[string]any)["category"] != "吃饭" {
+		t.Fatalf("预算应级联改名：%v", out)
+	}
+
+	// 有流水的分类删除被挡：409 + category_in_use；空闲分类可删。
+	resp, out = e.do("DELETE", wu(wid)+fmt.Sprintf("/ledger/categories/%d", int64(foodID)), nil)
+	if resp.StatusCode != http.StatusConflict || out["error"] != "category_in_use" {
+		t.Fatalf("有流水的分类删除应 409 category_in_use：%d %v", resp.StatusCode, out)
+	}
+	otherID := 0.0
+	_, out = e.do("GET", wu(wid)+"/ledger/categories", nil)
+	for _, c := range out["categories"].([]any) {
+		if cc := c.(map[string]any); cc["name"] == "其他" {
+			otherID = cc["id"].(float64)
+		}
+	}
+	resp, out = e.do("DELETE", wu(wid)+fmt.Sprintf("/ledger/categories/%d", int64(otherID)), nil)
+	if resp.StatusCode != http.StatusOK || len(out["categories"].([]any)) != 6 {
+		t.Fatalf("删空闲分类: %d %v", resp.StatusCode, out)
+	}
+	resp, _ = e.do("DELETE", wu(wid)+fmt.Sprintf("/ledger/categories/%d", int64(otherID)), nil)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("再删应 404，得到 %d", resp.StatusCode)
+	}
+}
+
+// 分类与账目/预算同边界：其他工作区成员读写删一律 403。
+func TestLedgerCategoryCrossWorkspaceDenied(t *testing.T) {
+	e := newTestEnv(t)
+	e.register("cat-owner", "password123")
+	widB := e.wid()
+	_, out := e.do("GET", wu(widB)+"/ledger/categories", nil)
+	cid := int64(out["categories"].([]any)[0].(map[string]any)["id"].(float64))
+
+	e.register("cat-intruder", "password123")
+	cases := []struct {
+		method, path string
+		body         any
+	}{
+		{"GET", wu(widB) + "/ledger/categories", nil},
+		{"POST", wu(widB) + "/ledger/categories", map[string]any{"name": "医疗"}},
+		{"PATCH", wu(widB) + fmt.Sprintf("/ledger/categories/%d", cid), map[string]any{"name": "x"}},
+		{"DELETE", wu(widB) + fmt.Sprintf("/ledger/categories/%d", cid), nil},
 	}
 	for _, tc := range cases {
 		resp, _ := e.do(tc.method, tc.path, tc.body)

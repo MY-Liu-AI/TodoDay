@@ -5,19 +5,33 @@
  * 主操作仍只有青绿一色。
  */
 
-/* 六分类：name 即存进服务端的 category（自由文本），color 仅作展示编码。 */
+/* 默认六分类（用户指定，2026-10-29）：与服务端 store/category.go 的
+ * 播种清单一致——首次读取 /ledger/categories 时服务端播种的就是这份；
+ * 此后分类存在服务端（ledger_categories 表），用户可在分类预算视图
+ * 增/改名/删，邮箱账单的 Kimi 解析按调整后的清单收敛。
+ * name 即存进服务端的 category；color 仅作展示编码，新增分类由服务端
+ * 按同序色板自动分配。 */
 export const LEDGER_CATS = [
   { name: "餐饮", color: "peach" },
-  { name: "通勤", color: "slate" },
-  { name: "居家", color: "teal" },
+  { name: "交通", color: "slate" },
   { name: "购物", color: "coral" },
+  { name: "住房", color: "teal" },
   { name: "娱乐", color: "cyan" },
-  { name: "学习", color: "yellow" },
+  { name: "其他", color: "yellow" },
 ];
+
+/* 按分类清单查颜色：清单来自服务端（含用户新增的分类）；
+ * 清单外的历史分类名（如改名前的旧名）回落 slate——分类是用户数据，
+ * 不能因为没匹配上就渲染失败。 */
+export function colorOf(categories, name) {
+  const hit = categories.find((c) => c.name === name);
+  return hit ? hit.color : "slate";
+}
 
 const CAT_COLORS = Object.fromEntries(LEDGER_CATS.map((c) => [c.name, c.color]));
 
-/* 未识别分类回落 slate：分类是用户数据，不能因为没匹配上就渲染失败。 */
+/* 未识别分类回落 slate：分类是用户数据，不能因为没匹配上就渲染失败。
+ * 兼容旧调用（只看默认清单）；新代码请用 colorOf(分类清单, 名)。 */
 export function catColor(name) {
   return CAT_COLORS[name] || "slate";
 }
@@ -25,6 +39,13 @@ export function catColor(name) {
 /* 分 → "¥1,234.5"。maximumFractionDigits=2 让整数不带小数尾。 */
 export function fmtMoney(fen) {
   return "¥" + (fen / 100).toLocaleString("zh-CN", { maximumFractionDigits: 2 });
+}
+
+/* 图表柱上标签的紧凑金额：≥¥10 取整元（千分位），<¥10 保留两位小数。
+   窄柱上挂全格式金额会互相碰撞，精确值留在 tooltip 的 fmtMoney。 */
+export function fmtBarMoney(fen) {
+  if (fen >= 1000) return "¥" + Math.round(fen / 100).toLocaleString("en-US");
+  return "¥" + (fen / 100).toFixed(2);
 }
 
 /* Date（或毫秒时间戳）→ "YYYY-MM"，与服务端 month 参数同约定。 */
@@ -93,25 +114,48 @@ export function spendByCategory(txs) {
   return out;
 }
 
-/* 分类支出排行：按金额降序，pct = 占总支出百分比（0–100，一位小数）。
- * 超过 topN 的分类聚合进「其他」——邮件导入会造出任意分类，排行不能
- * 无限长。当月无支出返回空数组。 */
-export function catExpRank(txs, topN = 8) {
+/* 分类柱序列：工作区分类清单全量出柱——零支出的分类也展示（高度 0），
+ * 让用户看到完整的分类盘子。清单外名字的旧支出（改名前的自由文本）
+ * 折进「其他」（清单里没有「其他」则补一条）。按金额降序，同额保持
+ * 清单顺序；pct = 占总支出百分比（0–100，一位小数，无支出全 0）。 */
+export function catBarSeries(txs, categories) {
   const spend = spendByCategory(txs);
   const total = Object.values(spend).reduce((a, b) => a + b, 0);
-  if (!total) return [];
-  const rows = Object.entries(spend)
-    .map(([category, amountFen]) => ({ category, amountFen }))
-    .sort((a, b) => b.amountFen - a.amountFen);
-  const head = rows.slice(0, topN);
-  const tail = rows.slice(topN);
-  if (tail.length) {
-    head.push({
-      category: "其他",
-      amountFen: tail.reduce((a, r) => a + r.amountFen, 0),
-    });
+  const rows = categories.map((c, i) => ({ category: c.name, amountFen: spend[c.name] || 0, i }));
+  const inList = new Set(categories.map((c) => c.name));
+  const stray = Object.entries(spend)
+    .filter(([k]) => !inList.has(k))
+    .reduce((a, [, v]) => a + v, 0);
+  if (stray) {
+    const other = rows.find((r) => r.category === "其他");
+    if (other) other.amountFen += stray;
+    else rows.push({ category: "其他", amountFen: stray, i: rows.length });
   }
-  return head.map((r) => ({ ...r, pct: Math.round((r.amountFen / total) * 1000) / 10 }));
+  rows.sort((a, b) => b.amountFen - a.amountFen || a.i - b.i);
+  return rows.map((r) => ({
+    category: r.category,
+    amountFen: r.amountFen,
+    pct: total ? Math.round((r.amountFen / total) * 1000) / 10 : 0,
+  }));
+}
+
+/* 当月每日支出序列：按日聚合（无支出为 0），覆盖当月每一天——
+ * 折线图要连续性。月份天数按本地日历（new Date(y, m, 0) 回退语义），
+ * 与 entry_date 同约定。只计支出。 */
+export function dailyExpSeries(txs, monthKey) {
+  const [y, m] = monthKey.split("-").map(Number);
+  const days = new Date(y, m, 0).getDate();
+  const byDay = {};
+  for (const tx of txs) {
+    if (tx.type !== "exp") continue;
+    byDay[tx.date] = (byDay[tx.date] || 0) + tx.amountFen;
+  }
+  const out = [];
+  for (let d = 1; d <= days; d++) {
+    const date = monthKey + "-" + String(d).padStart(2, "0");
+    out.push({ date, day: d, amountFen: byDay[date] || 0 });
+  }
+  return out;
 }
 
 /* 环比涨幅百分比：(cur - prev) / prev * 100，四舍五入取整。

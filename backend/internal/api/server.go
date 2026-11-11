@@ -93,11 +93,16 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/auth/register", s.register)
 	s.mux.HandleFunc("POST /api/auth/login", s.login)
 	s.mux.HandleFunc("POST /api/auth/logout", s.logout)
+	// 客户端失败回传：fetch 在网络层被拒（请求未到达服务端，访问日志里
+	// 什么都看不到）时，前端把错误名/信息回传到这里，服务端落日志用于
+	// 诊断「用户端失败但服务端无记录」这一类问题。
+	s.mux.HandleFunc("POST /api/client-log", s.withAuth(s.clientLog))
 	s.mux.HandleFunc("GET /api/me", s.withAuth(s.me))
 
 	s.mux.HandleFunc("GET /api/workspaces/{wid}/tasks", s.withAuth(s.withWorkspace(s.listTasks)))
 	s.mux.HandleFunc("POST /api/workspaces/{wid}/tasks", s.withAuth(s.withWorkspace(s.createTask)))
 	s.mux.HandleFunc("PATCH /api/workspaces/{wid}/tasks/{tid}", s.withAuth(s.withWorkspace(s.updateTask)))
+	s.mux.HandleFunc("POST /api/workspaces/{wid}/tasks/{tid}", s.withAuth(s.withWorkspace(s.updateTask)))
 	s.mux.HandleFunc("POST /api/workspaces/{wid}/tasks/{tid}/completion", s.withAuth(s.withWorkspace(s.setCompletion)))
 	s.mux.HandleFunc("POST /api/workspaces/{wid}/tasks/reorder", s.withAuth(s.withWorkspace(s.reorderTasks)))
 	s.mux.HandleFunc("POST /api/workspaces/{wid}/tasks/delete", s.withAuth(s.withWorkspace(s.deleteTasks)))
@@ -114,11 +119,13 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/workspaces/{wid}/goals", s.withAuth(s.withWorkspace(s.listGoals)))
 	s.mux.HandleFunc("POST /api/workspaces/{wid}/goals", s.withAuth(s.withWorkspace(s.createGoal)))
 	s.mux.HandleFunc("PATCH /api/workspaces/{wid}/goals/{gid}", s.withAuth(s.withWorkspace(s.updateGoal)))
+	s.mux.HandleFunc("POST /api/workspaces/{wid}/goals/{gid}", s.withAuth(s.withWorkspace(s.updateGoal)))
 	s.mux.HandleFunc("POST /api/workspaces/{wid}/goals/reorder", s.withAuth(s.withWorkspace(s.reorderGoals)))
 	s.mux.HandleFunc("POST /api/workspaces/{wid}/goals/{gid}/delete", s.withAuth(s.withWorkspace(s.deleteGoal)))
 	s.mux.HandleFunc("POST /api/workspaces/{wid}/goals/{gid}/restore", s.withAuth(s.withWorkspace(s.restoreGoal)))
 	s.mux.HandleFunc("POST /api/workspaces/{wid}/goals/{gid}/milestones", s.withAuth(s.withWorkspace(s.createGoalMilestone)))
 	s.mux.HandleFunc("PATCH /api/workspaces/{wid}/goals/{gid}/milestones/{mid}", s.withAuth(s.withWorkspace(s.updateGoalMilestone)))
+	s.mux.HandleFunc("POST /api/workspaces/{wid}/goals/{gid}/milestones/{mid}", s.withAuth(s.withWorkspace(s.updateGoalMilestone)))
 	s.mux.HandleFunc("POST /api/workspaces/{wid}/goals/{gid}/milestones/{mid}/delete", s.withAuth(s.withWorkspace(s.deleteGoalMilestone)))
 	s.mux.HandleFunc("POST /api/workspaces/{wid}/goals/{gid}/milestones/{mid}/restore", s.withAuth(s.withWorkspace(s.restoreGoalMilestone)))
 	s.mux.HandleFunc("POST /api/workspaces/{wid}/goals/{gid}/milestones/{mid}/tasks", s.withAuth(s.withWorkspace(s.attachGoalTask)))
@@ -129,6 +136,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/workspaces/{wid}/habits", s.withAuth(s.withWorkspace(s.listHabits)))
 	s.mux.HandleFunc("POST /api/workspaces/{wid}/habits", s.withAuth(s.withWorkspace(s.createHabit)))
 	s.mux.HandleFunc("PATCH /api/workspaces/{wid}/habits/{hid}", s.withAuth(s.withWorkspace(s.updateHabit)))
+	s.mux.HandleFunc("POST /api/workspaces/{wid}/habits/{hid}", s.withAuth(s.withWorkspace(s.updateHabit)))
 	s.mux.HandleFunc("POST /api/workspaces/{wid}/habits/delete", s.withAuth(s.withWorkspace(s.deleteHabits)))
 
 	// 记账本：每月收支流水。成员级（账目是个人数据，不设 owner 边界）；
@@ -136,6 +144,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/workspaces/{wid}/ledger", s.withAuth(s.withWorkspace(s.listLedger)))
 	s.mux.HandleFunc("POST /api/workspaces/{wid}/ledger", s.withAuth(s.withWorkspace(s.createLedgerEntry)))
 	s.mux.HandleFunc("PATCH /api/workspaces/{wid}/ledger/{eid}", s.withAuth(s.withWorkspace(s.updateLedgerEntry)))
+	s.mux.HandleFunc("POST /api/workspaces/{wid}/ledger/{eid}", s.withAuth(s.withWorkspace(s.updateLedgerEntry)))
 	s.mux.HandleFunc("POST /api/workspaces/{wid}/ledger/delete", s.withAuth(s.withWorkspace(s.deleteLedgerEntries)))
 	s.mux.HandleFunc("POST /api/workspaces/{wid}/ledger/restore", s.withAuth(s.withWorkspace(s.restoreLedgerEntries)))
 	// 分类预算：长期月度预算（每分类一条，upsert 按分类收敛）；成员级，
@@ -143,6 +152,13 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/workspaces/{wid}/ledger/budgets", s.withAuth(s.withWorkspace(s.listLedgerBudgets)))
 	s.mux.HandleFunc("PUT /api/workspaces/{wid}/ledger/budgets", s.withAuth(s.withWorkspace(s.putLedgerBudget)))
 	s.mux.HandleFunc("DELETE /api/workspaces/{wid}/ledger/budgets/{category}", s.withAuth(s.withWorkspace(s.deleteLedgerBudget)))
+	// 分类体系：工作区级分类清单（首次读取播种默认六分类）；成员级，
+	// 写操作响应回全量列表。Kimi 账单解析按这份清单收敛分类。
+	s.mux.HandleFunc("GET /api/workspaces/{wid}/ledger/categories", s.withAuth(s.withWorkspace(s.listLedgerCategories)))
+	s.mux.HandleFunc("POST /api/workspaces/{wid}/ledger/categories", s.withAuth(s.withWorkspace(s.addLedgerCategory)))
+	s.mux.HandleFunc("PATCH /api/workspaces/{wid}/ledger/categories/{cid}", s.withAuth(s.withWorkspace(s.renameLedgerCategory)))
+	s.mux.HandleFunc("POST /api/workspaces/{wid}/ledger/categories/{cid}", s.withAuth(s.withWorkspace(s.renameLedgerCategory)))
+	s.mux.HandleFunc("DELETE /api/workspaces/{wid}/ledger/categories/{cid}", s.withAuth(s.withWorkspace(s.deleteLedgerCategory)))
 
 	// 助手配置：成员可看掩码，只有 owner 能改、能取明文凭据。
 	s.mux.HandleFunc("GET /api/workspaces/{wid}/assistant", s.withAuth(s.withWorkspace(s.getAssistantConfig)))
@@ -223,6 +239,9 @@ func (w *statusWriter) WriteHeader(code int) {
 
 // serveStatic serves the built Vue app with SPA fallback (excluding /api).
 func (s *Server) serveStatic(w http.ResponseWriter, r *http.Request) {
+	// 临时诊断日志：定位线上客户端缓存了哪个版本的静态资源（文件名带内容
+	// hash，日志里的 assets/index-*.js 即可判断用户浏览器实际运行的版本）。
+	log.Printf("STATIC %s %s (if-mod=%q)", r.Method, r.URL.Path, r.Header.Get("If-Modified-Since"))
 	if s.staticDir == "" {
 		writeError(w, http.StatusNotFound, "not_found", "前端构建目录未配置")
 		return
@@ -230,20 +249,32 @@ func (s *Server) serveStatic(w http.ResponseWriter, r *http.Request) {
 	fs := http.FileServer(http.Dir(s.staticDir))
 	// If a real file exists, serve it; otherwise fall back to index.html so
 	// client-side routes resolve. /api never reaches here.
-	p := filepath.Clean(strings.TrimPrefix(r.URL.Path, "/"))
+	p := filepath.ToSlash(filepath.Clean(strings.TrimPrefix(r.URL.Path, "/")))
 	if p == "." {
 		p = "index.html"
 	}
+	// 缓存策略：index.html 永不缓存（每次 must-revalidate，保证发版后
+	// 浏览器立刻拿到新引用的新 hash 资源）；带内容 hash 的 /assets/
+	// 文件可永久缓存——文件名变了内容才变。无此头时浏览器按启发式
+	// 缓存 index.html，旧 bundle 会继续运行（线上曾因此出现旧版
+	// 渲染死循环吞掉保存请求）。
 	if _, err := os.Stat(filepath.Join(s.staticDir, p)); err != nil {
 		// Rewrite to "/" rather than "/index.html": http.FileServer 301-redirects
 		// any path ending in "/index.html" to "./", which would turn the SPA
 		// fallback into a redirect loop for deep client-side routes.
+		w.Header().Set("Cache-Control", "no-cache")
 		u := *r.URL
 		u.Path = "/"
 		r2 := r.Clone(r.Context())
 		r2.URL = &u
 		fs.ServeHTTP(w, r2)
 		return
+	}
+	switch {
+	case p == "index.html":
+		w.Header().Set("Cache-Control", "no-cache")
+	case strings.HasPrefix(p, "assets/"):
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	}
 	fs.ServeHTTP(w, r)
 }

@@ -6,7 +6,7 @@
  *  - 断网/超时/5xx：回滚本地改动并如实提示，不留下“已保存”的假象。
  */
 import { reactive } from "vue";
-import { api, ApiError, type WireBudget, type WireBudgets, type WireGoal, type WireGoalMilestone, type WireHabit, type WireLedgerMonth, type WireTask, type WireTx } from "./api";
+import { api, ApiError, type WireBudget, type WireBudgets, type WireCategories, type WireCategory, type WireGoal, type WireGoalMilestone, type WireHabit, type WireLedgerMonth, type WireTask, type WireTx } from "./api";
 import { C } from "./copy";
 import { reorder as reorderList, dateValue, validState } from "./lib/model.js";
 
@@ -209,6 +209,11 @@ export const st = reactive({
   budgets: [] as WireBudget[],
   budgetsLoaded: false,
   budgetsLoadError: "",
+  // 分类体系：工作区级分类清单（首次读取服务端播种默认六分类）。
+  // 写操作响应回全量列表；改名/删除的级联在服务端单事务完成。
+  categories: [] as WireCategory[],
+  categoriesLoaded: false,
+  categoriesLoadError: "",
   // 邮箱账单导入的配置视图（同样没有任何凭据字段）。
   mail: null as MailConfigView | null,
   mailLoading: false,
@@ -412,7 +417,7 @@ export async function saveTask(draft: Item) {
   }
   try {
     const task = await api<WireTask>(wsPath(`/tasks/${draft.id}`), {
-      method: "PATCH",
+      method: "POST", // 更新走 POST：部分用户网络会掐掉 PATCH（实测 Failed to fetch），服务端注册了同名 POST 别名
       body: {
         t: draft.t,
         p: draft.p,
@@ -944,7 +949,7 @@ export async function saveGoal(id: number, input: GoalInput, version: number): P
   if (!st.workspace) return false;
   try {
     const goal = await api<WireGoal>(wsPath(`/goals/${id}`), {
-      method: "PATCH",
+      method: "POST", // 更新走 POST：部分用户网络会掐掉 PATCH（实测 Failed to fetch），服务端注册了同名 POST 别名
       body: { ...input, version },
     });
     replaceGoal(goal);
@@ -1118,7 +1123,7 @@ export async function saveMilestone(
   if (!st.workspace) return false;
   try {
     const goal = await api<WireGoal>(wsPath(`/goals/${goalId}/milestones/${milestoneId}`), {
-      method: "PATCH",
+      method: "POST", // 更新走 POST：部分用户网络会掐掉 PATCH（实测 Failed to fetch），服务端注册了同名 POST 别名
       body: { ...input, version },
     });
     replaceGoal(goal);
@@ -1224,7 +1229,7 @@ export async function saveHabit(
   if (!st.workspace) return false;
   try {
     await api<WireHabit>(wsPath(`/habits/${habitId}`), {
-      method: "PATCH",
+      method: "POST", // 更新走 POST：部分用户网络会掐掉 PATCH（实测 Failed to fetch），服务端注册了同名 POST 别名
       body: { title: input.title, weekdays: input.days, version },
     });
     await loadHabits();
@@ -1403,7 +1408,7 @@ export async function saveTx(id: number, input: TxInput, version: number): Promi
   const snapshot = prev ? { ...prev } : null;
   if (prev) Object.assign(prev, input);
   try {
-    const tx = await api<WireTx>(wsPath(`/ledger/${id}`), { method: "PATCH", body: { ...input, version } });
+    const tx = await api<WireTx>(wsPath(`/ledger/${id}`), { method: "POST", body: { ...input, version } });
     const idx = st.txs.findIndex((t) => t.id === id);
     // 改日期可能把这笔移出当前展示月：不再属月就从列表撤下。
     if (idx >= 0) st.txs.splice(idx, 1);
@@ -1502,6 +1507,69 @@ export async function removeBudget(category: string): Promise<boolean> {
   }
 }
 
+/* ── 分类体系：工作区级分类清单（写操作响应回全量列表，客户端直接替换）。
+   删除被在用流水挡住时服务端回 409 category_in_use，fail() 如实弹 toast。 ── */
+
+export async function loadCategories(force = false) {
+  if (!st.workspace) return;
+  if (!force && st.categoriesLoaded) return;
+  st.categoriesLoadError = "";
+  try {
+    const data = await api<WireCategories>(wsPath("/ledger/categories"));
+    st.categories = data.categories;
+    st.categoriesLoaded = true;
+  } catch (e) {
+    st.categoriesLoadError = e instanceof ApiError && e.status === 0 ? C.loadError : C.ledgerCatLoadFailed;
+  }
+}
+
+export async function addCategory(name: string): Promise<boolean> {
+  if (!st.workspace) return false;
+  try {
+    const data = await api<WireCategories>(wsPath("/ledger/categories"), { method: "POST", body: { name } });
+    st.categories = data.categories;
+    st.categoriesLoaded = true;
+    return true;
+  } catch (e) {
+    fail(e);
+    return false;
+  }
+}
+
+export async function renameCategory(id: number, name: string): Promise<boolean> {
+  if (!st.workspace) return false;
+  try {
+    const data = await api<WireCategories>(wsPath(`/ledger/categories/${id}`), { method: "POST", body: { name } });
+    st.categories = data.categories;
+    // 服务端级联了账本流水与预算：分类变了名，当月数据强制重拉对齐。
+    if (st.ledgerMonth) {
+      st.ledgerLoaded = false;
+      await loadLedger(st.ledgerMonth, true);
+    }
+    st.budgetsLoaded = false;
+    await loadBudgets(true);
+    return true;
+  } catch (e) {
+    fail(e);
+    return false;
+  }
+}
+
+export async function removeCategory(id: number): Promise<boolean> {
+  if (!st.workspace) return false;
+  try {
+    const data = await api<WireCategories>(wsPath(`/ledger/categories/${id}`), { method: "DELETE" });
+    st.categories = data.categories;
+    // 服务端一并清掉了该分类的预算行，预算列表重拉对齐。
+    st.budgetsLoaded = false;
+    await loadBudgets(true);
+    return true;
+  } catch (e) {
+    fail(e);
+    return false;
+  }
+}
+
 /* 与上月对比用的上月汇总：直接读 listLedger 的 stats，不碰 st.txs
    （那是当前展示月的列表）。失败返回 null——分析区降级为只显示当月。 */
 export async function fetchMonthStats(month: string): Promise<{ exp: number; inc: number; net: number } | null> {
@@ -1524,6 +1592,9 @@ function clearLedger() {
   st.budgets = [];
   st.budgetsLoaded = false;
   st.budgetsLoadError = "";
+  st.categories = [];
+  st.categoriesLoaded = false;
+  st.categoriesLoadError = "";
 }
 registerLogoutHook(clearLedger);
 

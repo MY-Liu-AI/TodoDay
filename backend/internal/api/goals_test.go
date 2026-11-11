@@ -357,3 +357,48 @@ func wu(wid float64) string {
 func itoa(n int64) string {
 	return strconv.FormatInt(n, 10)
 }
+
+// 更新类端点的 POST 别名：部分用户网络会掐掉 PATCH（2026-10-30 线上实测
+// 用户浏览器 fetch PATCH 直接 Failed to fetch，请求未到达服务端；同浏览器
+// POST 正常）。前端统一走 POST，这里验证别名行为与 PATCH 一致（200/409）。
+func TestUpdatePostAliases(t *testing.T) {
+	e := newTestEnv(t)
+	e.register("aliaser", "password123")
+	wid := e.wid()
+
+	resp, out := e.do("POST", wu(wid)+"/goals", map[string]any{
+		"title": "别名目标", "goalText": "g", "acceptance": "a",
+		"failureCost": "f", "group": "", "status": "active",
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create goal: %d", resp.StatusCode)
+	}
+	gid := int64(out["id"].(float64))
+
+	// 目标更新：POST 别名应等价 PATCH。
+	resp, out = e.do("POST", wu(wid)+"/goals/"+itoa(gid), map[string]any{
+		"title": "别名目标-改", "goalText": "g", "acceptance": "a",
+		"failureCost": "f", "group": "", "status": "active", "version": 1,
+	})
+	if resp.StatusCode != http.StatusOK || out["title"] != "别名目标-改" {
+		t.Fatalf("POST 别名更新目标: %d %v", resp.StatusCode, out)
+	}
+	resp, _ = e.do("POST", wu(wid)+"/goals/"+itoa(gid), map[string]any{
+		"title": "x", "goalText": "g", "acceptance": "a",
+		"failureCost": "f", "group": "", "status": "active", "version": 99,
+	})
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("POST 别名也应有 409 乐观并发: %d", resp.StatusCode)
+	}
+
+	// 任务更新：POST 别名。
+	resp, out = e.do("POST", wu(wid)+"/tasks", map[string]any{"t": "别名任务", "clientId": "alias-1"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create task: %d", resp.StatusCode)
+	}
+	tid := out["id"].(string)
+	resp, out = e.do("POST", wu(wid)+"/tasks/"+tid, map[string]any{"t": "别名任务-改", "version": 1})
+	if resp.StatusCode != http.StatusOK || out["t"] != "别名任务-改" {
+		t.Fatalf("POST 别名更新任务: %d %v", resp.StatusCode, out)
+	}
+}

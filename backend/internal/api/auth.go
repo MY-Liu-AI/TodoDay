@@ -1,6 +1,9 @@
 package api
 
 import (
+	"bytes"
+	"io"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -154,6 +157,18 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 		Name: sessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 	})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// clientLog 接收前端回传的客户端错误（如 fetch 在网络层被拒），
+// 只进日志不落库；体长截断，避免被当作无限容量的日志通道。
+func (s *Server) clientLog(w http.ResponseWriter, r *http.Request) {
+	u := userFrom(r)
+	body, _ := io.ReadAll(http.MaxBytesReader(w, r.Body, 512))
+	body = bytes.TrimSpace(body)
+	if len(body) > 0 {
+		log.Printf("CLIENT-LOG uid=%d %s", u.ID, body)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 

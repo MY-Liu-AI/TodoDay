@@ -2006,11 +2006,10 @@ button.focus-task-expand {
   margin-bottom: 4px;
 }
 /* 甘特：无边框泳道式布局。画布不吃面板底/边框/内边距，直接落在工作区上；
-   刻度行下沿是一条拉通左右的时间轴基线（图表顶部的锚点，两端对齐标签列
-   与完成度列），里程碑行无横线、靠行高与条带收节奏，目标组之间纯留白分隔，
-   只有今天线浮在行间。
-   三列（标签/时间轨/元信息）用同一套列宽变量，今天线与条严格对齐；
-   超窄屏整卡横向滚动。 */
+   刻度尺（月份带 + 日/周刻度）铺满整个视窗——过去固定 7 天 + 未来至少
+   28 天（随最远截止延展），今天稳定在轴左侧 ~1/5 处；参考层（周末底纹/
+   网格线/今天线）与条带同源对齐；已完成的里程碑折进组头小签不占行。
+   三列（标签/时间轨/元信息）用同一套列宽变量；超窄屏整卡横向滚动。 */
 .gantt {
   overflow-x: auto;
 }
@@ -2018,82 +2017,154 @@ button.focus-task-expand {
   --gantt-label: 110px;
   --gantt-meta: 116px;
   --gantt-gap: 12px;
+  /* 刻度尺实际高度（padding-top 2 + 月份带 20 + 刻度行 18）：
+     参考层 top 取它，尺子改高要同步改这里。 */
+  --gantt-ruler-h: 40px;
+  /* 周末底纹（仅日粒度）：低饱和铺底，退后于条带。 */
+  --gantt-weekend: rgb(28 34 30 / 0.035);
   position: relative;
   min-width: 560px;
   overflow: hidden;
 }
-.gantt-ticks {
+:root[data-theme="dark"] .gantt-canvas {
+  --gantt-weekend: rgb(235 242 237 / 0.04);
+}
+/* 刻度尺：月份带 + 刻度行，三列与里程碑行一致；两行都只占中间时间轨列，
+   刻度、网格线、条带、今天线共用同一坐标轴（同一百分比 = 同一像素）。
+   下沿拉通成时间轴基线（左端对齐标签列、右端对齐元信息列右缘）。 */
+.gantt-ruler {
   position: relative;
   display: grid;
   grid-template-columns: var(--gantt-label) 1fr var(--gantt-meta);
-  gap: var(--gantt-gap);
-  padding: 2px 0 10px;
+  column-gap: var(--gantt-gap);
+  padding-top: 2px;
 }
-/* 时间轴基线拉通整行（与刻度下沿同一水平线）：左端对齐标签列、
-   右端对齐完成度列右缘，图表顶边与两端内容列一起收齐。 */
-.gantt-ticks::after {
+.gantt-ruler::after {
   content: "";
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 10px;
+  bottom: 0;
   border-bottom: 1px solid var(--line);
 }
-/* 刻度轨 = 时间轨 + 40px：span 到第 3 列后再用正外边距收回元信息列与
-   间距、只留 40px——刻度从今天起均匀分布在这条轨上，结尾刻度正好落在
-   时间轨右缘 +40px、紧邻进度列又不与之对齐（任何屏宽都不溢出）。 */
+/* 月份带：跨月自动分段，每段左边线 + 「YYYY 年 M 月」。 */
+.gantt-months {
+  grid-column: 2 / 3;
+  position: relative;
+  height: 20px;
+}
+.gantt-month {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid var(--line);
+  padding: 2px 0 0 6px;
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+}
+/* 刻度行：小刻度每天一根（周粒度与标签刻度同位）；贴轴首/轴尾的刻度
+   标签改左/右对位，任何屏宽文字都不溢出画布（画布 overflow:hidden 会
+   把探出部分裁成半张脸）。 */
+.gantt-ticks {
+  grid-column: 2 / 3;
+  position: relative;
+  height: 18px;
+}
 .gantt-ticks-track {
-  grid-column: 2 / 4;
-  margin-right: calc(var(--gantt-meta) + var(--gantt-gap) - 40px);
   position: relative;
   display: block;
-  height: 14px;
+  height: 100%;
+}
+.gantt-tick-mark {
+  position: absolute;
+  bottom: 0;
+  width: 1px;
+  height: 5px;
+  background: var(--line);
 }
 .gantt-tick {
   position: absolute;
-  top: 0;
+  bottom: 7px;
   transform: translateX(-50%);
   font-family: var(--mono);
   font-size: 10px;
-  color: var(--muted);
+  color: var(--faint);
+  white-space: nowrap;
 }
-.gantt-tick:first-child {
+.gantt-tick.is-start {
   transform: none;
 }
-/* 今天线定位层：位置 = 中间列（标签列 + 间距之后，元信息列 + 间距之前），
-   顶部对齐时间轴基线，底部收在内容底边。 */
+.gantt-tick.is-end {
+  transform: translateX(-100%);
+}
+/* 今天尺签：青绿小三角指着今天刻度、文字贴尺（不再飘在线顶的浮动
+   标签）；与尺签同位的刻度标签由 lib 按轨宽换算成 clash、模板整枚
+   隐藏（同位两套文字会互相挤压）。 */
+.gantt-today-tab {
+  position: absolute;
+  bottom: -1px;
+  transform: translateX(-50%);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--panel);
+  padding: 0 4px 1px;
+  border-radius: 3px 3px 0 0;
+  white-space: nowrap;
+  z-index: 2;
+}
+.gantt-today-tab::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -4px;
+  transform: translateX(-50%);
+  border: 4px solid transparent;
+  border-bottom: none;
+  border-top: 4px solid var(--accent);
+}
+/* 参考层：位置 = 中间列（标签列 + 间距之后，元信息列 + 间距之前），
+   顶部对齐刻度尺基线，底部收在内容底边。 */
 .gantt-grid {
   position: absolute;
-  top: 17px;
+  top: var(--gantt-ruler-h);
   bottom: 0;
   left: calc(var(--gantt-label) + var(--gantt-gap));
   right: calc(var(--gantt-meta) + var(--gantt-gap));
   pointer-events: none;
 }
+/* 周末底纹：周六日两列低饱和铺底（仅日粒度），退后于条带。 */
+.gantt-weekend {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: var(--gantt-weekend);
+}
+/* 刻度网格线：1px 竖线退后于条带；周一的略深，周分界更醒目。 */
+.gantt-gridline {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--line-soft);
+}
+.gantt-gridline.is-week {
+  background: var(--line);
+}
 .gantt-today {
   position: absolute;
   top: 0;
   bottom: 0;
-  width: 2px;
-  margin-left: -1px;
+  width: 1.5px;
+  margin-left: -0.75px;
   background: var(--accent);
-  opacity: 0.7;
-}
-.gantt-today em {
-  position: absolute;
-  top: -4px;
-  left: 50%;
-  transform: translate(-50%, -100%);
-  font-style: normal;
-  font-size: 9px;
-  line-height: 1;
-  color: var(--accent);
-  background: var(--panel);
-  padding: 1px 3px;
-  border-radius: 3px;
-  white-space: nowrap;
+  opacity: 0.55;
 }
 .gantt-goal {
+  position: relative;
+  z-index: 1;
   padding-bottom: 2px;
 }
 /* 目标组之间纯留白分隔——无边框布局里再加线就是第二种边框。 */
@@ -2103,7 +2174,6 @@ button.focus-task-expand {
 .gantt-goal-head {
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
   gap: 8px;
   margin-bottom: 4px;
 }
@@ -2114,8 +2184,18 @@ button.focus-task-expand {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 已完成里程碑折进这枚小签，不占行、不参与定轴。 */
+.gantt-done-chip {
+  flex: none;
+  font-size: 10px;
+  color: var(--faint);
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
 .gantt-goal-pct {
   flex: none;
+  margin-left: auto;
   font-family: var(--mono);
   font-size: 11px;
   color: var(--accent);
@@ -2171,6 +2251,13 @@ button.focus-task-expand {
   border-bottom-left-radius: 3px;
   border-left: 1.5px dashed var(--accent);
 }
+/* 被过去窗（7 天）截断的条带：左缘虚线 = 「延伸进更早的过去」，
+   逾期多久看元信息列的逾期小签，不看条带长度。 */
+.gantt-bar.clip-past {
+  border-top-left-radius: 3px;
+  border-bottom-left-radius: 3px;
+  border-left: 1.5px dashed var(--accent);
+}
 .gantt-fill {
   display: block;
   height: 100%;
@@ -2186,6 +2273,12 @@ button.focus-task-expand {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* 逾期小签：走既有 --neg 状态 token（全图唯一状态色，主操作仍是青绿）。 */
+.gantt-late {
+  color: var(--neg);
+  font-style: normal;
+  font-weight: 600;
 }
 .goals-empty {
   font-size: 13px;
@@ -3145,7 +3238,7 @@ button.focus-task-expand {
    数据编码，主操作保持青绿一色；全部走变量，深浅色自动适配。 */
 .ledger-view {
   min-width: 0;
-  padding-bottom: 96px; /* 给 FAB 留出滚动余量 */
+  padding-bottom: 32px;
 }
 /* 原三卡（.ledger-stats）已由「与上月对比」三卡取代：数值口径一致，
    每卡多一行环比。 */
@@ -3189,9 +3282,16 @@ button.focus-task-expand {
   padding: 0 12px;
   margin-top: 6px;
   font-size: 13px;
+  transition: background 0.15s var(--ease);
 }
 .ledger-row.is-temp {
   opacity: 0.6; /* 乐观插入、尚未拿到服务端 id 的账目 */
+}
+/* 悬停行微微提亮，暗示可点（操作按钮同现；触屏无悬停不影响）。 */
+@media (hover: hover) {
+  .ledger-row:hover {
+    background: var(--raised);
+  }
 }
 .ledger-dot {
   width: 9px;
@@ -3247,17 +3347,17 @@ button.focus-task-expand {
 }
 
 /* 流水分析：与上月对比三卡（数值口径同原三卡，多一行环比）+
-   分类支出排行（条形按当月最高分类归一，标签是占总支出比例）。
-   全部走变量，深浅色自动适配。 */
+   下方双栏图表（见 .ledger-charts）。全部走变量，深浅色自动适配。 */
 .ledger-mom {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
+/* 与 .goal-stat 同一节奏（raised 底、同内边距、同字号），全站统计卡一套语法。 */
 .ledger-mom-card {
   background: var(--raised);
   border-radius: var(--r-md);
-  padding: 12px 16px;
+  padding: 14px 16px;
   min-width: 0;
 }
 .ledger-mom-label {
@@ -3268,7 +3368,7 @@ button.focus-task-expand {
 .ledger-mom-card b {
   display: block;
   font-family: var(--mono);
-  font-size: 19px;
+  font-size: 20px;
   font-weight: 600;
   letter-spacing: -0.02em;
   white-space: nowrap;
@@ -3296,58 +3396,170 @@ button.focus-task-expand {
   font-size: 13px;
   margin: 4px 2px 0;
 }
-.ledger-rank {
-  margin: 2px 0 4px;
+/* 流水分析双栏图表：左每日支出折线（同番茄专注 .focus-trend 语法）、
+   右分类支出柱（同进度统计 .weekbar 语法）——无面板、无坐标轴盒子，
+   面积/细线/圆点 + HTML 刻度行；文本全走文本色变量，深浅色自动适配。 */
+.ledger-charts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  margin-top: 22px; /* 与统计卡之间留出呼吸感，同 listhead 的节奏 */
 }
-.ledger-rank-row {
+/* grouphead 原为整页宽度设计（左右 16px 内边距），半栏里归零对齐图边。 */
+.ledger-charts .grouphead {
+  padding-left: 0;
+  padding-right: 0;
+}
+.ledger-trend {
+  margin-top: 4px;
+}
+/* 高度固定 100，与右栏柱区（.ledger-catbar）严格同高；宽度由 JS 实测
+   栏宽写进 viewBox，1:1 渲染，不再随宽度等比伸缩。 */
+.ledger-trend svg {
+  display: block;
+  width: 100%;
+  height: 100px;
+  overflow: visible;
+}
+.ledger-trend .area {
+  fill: var(--accent-soft);
+  stroke: none;
+}
+.ledger-trend .line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.1;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+.ledger-trend .pt {
+  fill: var(--accent);
+}
+.ledger-trend-axis {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 7px 2px;
-  font-size: 13px;
+  margin-top: 6px;
 }
-.ledger-rank-cat {
-  width: 64px;
-  flex: none;
-  font-weight: 600;
+.ledger-trend-axis .tick {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--faint);
+  white-space: nowrap;
+}
+/* 分类柱：--event-bg 柱底 + 2px 分类色（--event-line）顶边，同 weekbar；
+   身份同时由基线下的文字标签承担，颜色只是辅助编码。柱上限宽瘦身，
+   金额标签用紧凑格式；基线刻度行同左图 HTML 刻度行语法，让柱落地。 */
+.ledger-catbar {
+  display: flex;
+  gap: 6px;
+  align-items: flex-end;
+  height: 100px; /* 与左图折线 viewBox 高一致（100），两图同高对齐 */
+  margin-top: 4px;
+}
+.ledger-catbar .d {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  justify-content: flex-end;
+}
+.ledger-catbar .v {
+  font-size: 9px;
+  font-family: var(--mono);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.ledger-catbar .b {
+  width: 100%;
+  max-width: 44px;
+  background: var(--event-bg, var(--accent-soft));
+  border-top: 2px solid var(--event-line, var(--accent));
+  border-radius: 3px 3px 0 0;
+  min-height: 2px;
+  transition: height 0.5s var(--ease);
+}
+/* 悬停柱：整柱转分类实色，金额标签加深（触屏无悬停，不影响）。
+   精确金额/占比在 tooltip。 */
+@media (hover: hover) {
+  .ledger-catbar .d:hover .b {
+    background: var(--event-line, var(--accent));
+  }
+  .ledger-catbar .d:hover .v {
+    color: var(--ink);
+  }
+}
+.ledger-catbar-axis {
+  display: flex;
+  gap: 6px;
+  border-top: 1px solid var(--line-soft);
+  padding-top: 5px;
+  margin-top: 0;
+}
+.ledger-catbar-axis .l {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  font-size: 10px;
+  color: var(--faint);
+  font-family: var(--mono);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.ledger-rank-bar {
+
+/* 分类体系管理：行复用流水行的节奏（圆点 + 名字 + 行内操作），
+   改名时换成内联输入；添加行是输入 + 按钮的一排。整块折叠在预算
+   列表之后，默认收起（低频管理不挤占日常预算视口）。 */
+.ledger-catrows {
+  margin: 2px 0 14px;
+}
+.ledger-cat-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 2px;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 13px;
+}
+.ledger-cat-row .ledger-cat {
+  font-weight: 600;
+}
+.ledger-cat-row .ledger-ops {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 2px;
+}
+.ledger-cat-rename {
   flex: 1;
   min-width: 0;
-  height: 8px;
-  border-radius: 999px;
-  background: var(--line);
-  overflow: hidden;
+  font-size: 13px;
+  padding: 4px 8px;
 }
-.ledger-rank-bar i {
-  display: block;
-  height: 100%;
-  min-width: 3px;
-  border-radius: inherit;
-  background: var(--event-line, var(--muted));
+.ledger-cat-add {
+  display: flex;
+  gap: 8px;
+  padding: 8px 2px 2px;
 }
-.ledger-rank-amt {
-  font-family: var(--mono);
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-  white-space: nowrap;
-}
-.ledger-rank-pct {
-  width: 48px;
-  flex: none;
-  text-align: right;
-  color: var(--faint);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
+.ledger-cat-add input {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  padding: 6px 10px;
 }
 
 /* 分类预算：长期月度预算卡片。进度条按花费/预算，超支变 --neg；
-   无预算分类支出行复用 ledger-row 的排版节奏。 */
+   无预算分类支出行复用 ledger-row 的排版节奏。卡片区与无预算区、
+   分类区共用 ledger-listhead 分区；卡片间距与流水行同为 6px。 */
 .ledger-budget-hint {
   margin: 2px 2px 12px;
+}
+.ledger-budget .ledger-listhead {
+  margin: 18px 2px 6px;
 }
 .budget-form {
   display: flex;
@@ -3377,6 +3589,11 @@ button.focus-task-expand {
   width: 140px;
   font-family: var(--mono);
 }
+/* 分类胶囊行占满整行（与记一笔同款选择语法），金额与操作在下一行。 */
+.budget-form .budget-form-cats {
+  flex: 1 1 100%;
+  padding: 2px 0 6px;
+}
 .budget-form-actions {
   display: flex;
   align-items: center;
@@ -3388,12 +3605,18 @@ button.focus-task-expand {
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 12px;
-  margin-top: 8px;
+  margin-top: 6px;
+  transition: background 0.15s var(--ease);
 }
 .budget-top {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+.budget-top .ledger-cat {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .budget-nums {
   margin-left: auto;
@@ -3460,37 +3683,36 @@ button.focus-task-expand {
   margin-left: auto;
 }
 
+/* 行内操作（预算卡、分类管理行）默认隐藏，悬停或键盘聚焦该行才浮现；
+   触屏设备没有悬停，保持常显以免点不到。预算卡整卡悬停即浮现。 */
+@media (hover: hover) {
+  .budget-card:hover {
+    background: var(--raised);
+  }
+  .budget-card .ledger-ops,
+  .ledger-cat-row .ledger-ops {
+    opacity: 0;
+    transition: opacity 0.16s var(--ease);
+  }
+  .budget-card:hover .ledger-ops,
+  .budget-card:focus-within .ledger-ops,
+  .ledger-cat-row:hover .ledger-ops,
+  .ledger-cat-row:focus-within .ledger-ops {
+    opacity: 1;
+  }
+}
+
+@media (max-width: 900px) {
+  .ledger-charts {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 640px) {
   .ledger-mom {
     grid-template-columns: 1fr;
     gap: 8px;
   }
-  .ledger-rank-cat {
-    width: 52px;
-  }
-  .ledger-rank-pct {
-    display: none;
-  }
-}
-.ledger-fab {
-  position: fixed;
-  right: 24px;
-  bottom: 24px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: var(--accent);
-  color: var(--accent-ink);
-  border: 0;
-  border-radius: 999px;
-  padding: 13px 22px;
-  font-size: 15px;
-  font-weight: 700;
-  box-shadow: var(--shadow, 0 8px 24px rgb(0 0 0 / 0.12));
-  z-index: 40;
-}
-.ledger-fab:hover {
-  filter: brightness(1.06);
 }
 
 /* 记一笔：底部弹出的 sheet（原生 dialog 锚到视口底部）。 */

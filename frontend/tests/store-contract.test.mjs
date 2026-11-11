@@ -23,12 +23,15 @@ test("saveTask routes empty-id drafts to the create endpoint", () => {
   assert.match(branchBody, /clientId/);
 });
 
-test("saveTask PATCH branch keeps optimistic snapshot + conflict handling", () => {
+test("saveTask update branch keeps optimistic snapshot + conflict handling", () => {
   const fnStart = src.indexOf("export async function saveTask");
   const body = src.slice(fnStart);
   assert.match(body, /rememberSnapshot\(prev\)/);
   assert.match(body, /handleConflict\(e\)/);
-  assert.match(body, /method: "PATCH"/);
+  // 更新统一走 POST：部分用户网络会掐掉 PATCH（2026-10-30 实测线上
+  // Failed to fetch，PATCH 请求未出浏览器），服务端注册了同名 POST 别名。
+  assert.match(body, /method: "POST"/);
+  assert.doesNotMatch(body, /method: "PATCH"/);
 });
 
 test("stats refresh after a mutation is forced, not silently skipped", () => {

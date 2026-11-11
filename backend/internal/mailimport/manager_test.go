@@ -37,11 +37,29 @@ func newTestLiteral(s string) testLiteral        { return testLiteral{strings.Ne
 func (l testLiteral) Read(p []byte) (int, error) { return l.r.Read(p) }
 func (l testLiteral) Size() int64                { return int64(l.r.Len()) }
 
+// appendMail 往 memserver 的 INBOX 追加一封测试邮件（与初始三封同构），
+// 模拟「监听期间新邮件到达」——服务端的 EXISTS 推送应触发 IDLE 唤醒。
+func appendMail(t *testing.T, user *imapmemserver.User, subject, from, body string) imap.UID {
+	t.Helper()
+	raw := "From: " + from + "\r\n" +
+		"To: " + testMailUser + "\r\n" +
+		"Subject: " + subject + "\r\n" +
+		"Date: Mon, 26 Oct 2026 10:00:00 +0800\r\n" +
+		"Content-Type: text/plain; charset=utf-8\r\n" +
+		"\r\n" + body + "\r\n"
+	data, err := user.Append("INBOX", newTestLiteral(raw), &imap.AppendOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data.UID
+}
+
 // newMemIMAP 起一个真的 IMAP 服务（go-imap 内存实现）：TLS + LOGIN +
 // INBOX，并塞入三封测试邮件（1 消费、1 营销、1 工资）。返回服务端点
-// （host:port）与校验配置。Manager.imapAddr/tlsConfig 指向它即完成
-// 注入——传输层不再有任何假实现。
-func newMemIMAP(t *testing.T, wrongCode bool) (string, map[string]imap.UID, *tls.Config) {
+// （host:port）、邮件 UID、校验配置与 memserver 用户（测试往 INBOX
+// 追加新邮件以触发 IDLE 推送）。Manager.imapAddr/tlsConfig 指向它即
+// 完成注入——传输层不再有任何假实现。
+func newMemIMAP(t *testing.T, wrongCode bool) (string, map[string]imap.UID, *tls.Config, *imapmemserver.User) {
 	t.Helper()
 
 	code := testMailCode
@@ -102,17 +120,7 @@ func newMemIMAP(t *testing.T, wrongCode bool) (string, map[string]imap.UID, *tls
 	t.Cleanup(func() { srv.Close() })
 
 	appendMsg := func(subject, from, body string) imap.UID {
-		raw := "From: " + from + "\r\n" +
-			"To: " + testMailUser + "\r\n" +
-			"Subject: " + subject + "\r\n" +
-			"Date: Mon, 26 Oct 2026 10:00:00 +0800\r\n" +
-			"Content-Type: text/plain; charset=utf-8\r\n" +
-			"\r\n" + body + "\r\n"
-		data, err := user.Append("INBOX", newTestLiteral(raw), &imap.AppendOptions{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return data.UID
+		return appendMail(t, user, subject, from, body)
 	}
 
 	uids := map[string]imap.UID{
@@ -123,12 +131,13 @@ func newMemIMAP(t *testing.T, wrongCode bool) (string, map[string]imap.UID, *tls
 	pool := x509.NewCertPool()
 	pool.AddCert(tmplCert)
 	clientTLS := &tls.Config{RootCAs: pool, ServerName: "127.0.0.1"}
-	return ln.Addr().String(), uids, clientTLS
+	return ln.Addr().String(), uids, clientTLS, user
 }
 
 // newMailTestManager 造一套完整测试环境：内存 SQLite + 迁移 + owner 工作区 +
-// 主密钥 + 假 Kimi（按主题返回 canned 解析结果）+ 指向 memserver 的 Manager。
-func newMailTestManager(t *testing.T) (*Manager, *store.Store, int64, map[string]imap.UID) {
+// 主密钥 + 假 Kimi（按主题返回 canned 解析结果）+ 指向 memserver 的
+// Manager。同时返回 memserver 用户，供测试追加新邮件触发 IDLE 推送。
+func newMailTestManager(t *testing.T) (*Manager, *store.Store, int64, map[string]imap.UID, *imapmemserver.User) {
 	t.Helper()
 	st, err := store.Open(":memory:")
 	if err != nil {
@@ -191,11 +200,11 @@ func newMailTestManager(t *testing.T) (*Manager, *store.Store, int64, map[string
 		t.Fatal(err)
 	}
 
-	addr, uids, clientTLS := newMemIMAP(t, false)
+	addr, uids, clientTLS, user := newMemIMAP(t, false)
 	m := NewManager(st, box)
 	m.imapAddr = addr
 	m.tlsConfig = clientTLS
-	return m, st, ws.ID, uids
+	return m, st, ws.ID, uids, user
 }
 
 // saveMailCfg 保存邮箱配置：凭据走密文（与生产路径一致）。
@@ -215,7 +224,7 @@ func saveMailCfg(t *testing.T, st *store.Store, box *secretbox.Box, wid, uid int
 // 端到端：memserver 里 3 封邮件（1 消费、1 营销、1 工资），假 Kimi 解析，
 // 应落 2 笔账；营销邮件标记已处理但不落库。再跑一轮应零导入（幂等）。
 func TestRunOnceEndToEnd(t *testing.T) {
-	m, st, wid, uids := newMailTestManager(t)
+	m, st, wid, uids, _ := newMailTestManager(t)
 	uID, err := st.WorkspaceOwnerID(t.Context(), wid)
 	if err != nil {
 		t.Fatal(err)
@@ -263,7 +272,7 @@ func TestRunOnceEndToEnd(t *testing.T) {
 
 // 按发件人预筛：只配了来源时不看关键词——只有工资邮件通过。
 func TestRunOnceSenderFilter(t *testing.T) {
-	m, st, wid, uids := newMailTestManager(t)
+	m, st, wid, uids, _ := newMailTestManager(t)
 	uID, _ := st.WorkspaceOwnerID(t.Context(), wid)
 	// senders 只放行 hr@example.com：消费/营销邮件被来源拦下（标记 seen），
 	// 只有工资邮件进入 Kimi 解析。
@@ -290,7 +299,7 @@ func TestRunOnceSenderFilter(t *testing.T) {
 
 // 从邮箱发现发件人：按 From 聚合封数，样本主题为最近一封。
 func TestDiscoverSenders(t *testing.T) {
-	m, st, wid, _ := newMailTestManager(t)
+	m, st, wid, _, _ := newMailTestManager(t)
 	uID, _ := st.WorkspaceOwnerID(t.Context(), wid)
 	saveMailCfg(t, st, m.box, wid, uID, true, "")
 
@@ -329,10 +338,10 @@ func TestDiscoverSenders(t *testing.T) {
 
 // 授权码错误：IMAP LOGIN 失败 → ErrAuth，运行状态如实记录、提示核对授权码。
 func TestRunOnceAuthExpired(t *testing.T) {
-	m, st, wid, _ := newMailTestManager(t)
+	m, st, wid, _, _ := newMailTestManager(t)
 	uID, _ := st.WorkspaceOwnerID(t.Context(), wid)
 	// memserver 上真实的授权码是 right-code，存进去的是错的。
-	addr, _, clientTLS := newMemIMAP(t, true)
+	addr, _, clientTLS, _ := newMemIMAP(t, true)
 	m.imapAddr = addr
 	m.tlsConfig = clientTLS
 	saveMailCfg(t, st, m.box, wid, uID, true, "")
@@ -363,7 +372,7 @@ func isErrAuth(t *testing.T, st *store.Store, wid int64) bool {
 
 // 无凭据/已撤销：RunOnce 不发起任何连接，如实失败。
 func TestRunOnceNoCredentials(t *testing.T) {
-	m, st, wid, _ := newMailTestManager(t)
+	m, st, wid, _, _ := newMailTestManager(t)
 	uID, _ := st.WorkspaceOwnerID(t.Context(), wid)
 	// 只配置邮箱地址，授权码密文为空（等价于已撤销）。
 	if _, err := st.SaveMailConfig(t.Context(), wid, uID, store.MailConfigInput{
@@ -394,7 +403,7 @@ func TestRunOnceNoKimi(t *testing.T) {
 	u, _ := st.CreateUser(t.Context(), "owner", "hash")
 	ws, _ := st.CreateWorkspaceWithOwner(t.Context(), u.ID, "ws", "Asia/Shanghai")
 	box, _ := secretbox.FromKey("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
-	addr, _, clientTLS := newMemIMAP(t, false)
+	addr, _, clientTLS, _ := newMemIMAP(t, false)
 	m := NewManager(st, box)
 	m.imapAddr = addr
 	m.tlsConfig = clientTLS
@@ -413,7 +422,7 @@ func TestRunOnceNoKimi(t *testing.T) {
 }
 
 func TestManagerStartStop(t *testing.T) {
-	m, st, wid, _ := newMailTestManager(t)
+	m, st, wid, _, _ := newMailTestManager(t)
 	uID, _ := st.WorkspaceOwnerID(t.Context(), wid)
 	saveMailCfg(t, st, m.box, wid, uID, true, "")
 
@@ -435,7 +444,7 @@ func TestManagerStartStop(t *testing.T) {
 
 // 凭据缺失/已撤销：Start 同步拒绝（不连接），供启动端点回滚 enabled。
 func TestManagerStartRequiresCredentials(t *testing.T) {
-	m, st, wid, _ := newMailTestManager(t)
+	m, st, wid, _, _ := newMailTestManager(t)
 	uID, _ := st.WorkspaceOwnerID(t.Context(), wid)
 	if _, err := st.SaveMailConfig(t.Context(), wid, uID, store.MailConfigInput{
 		Enabled: true, Mailbox: testMailUser, // 没有授权码
@@ -455,9 +464,156 @@ func TestManagerStartRequiresCredentials(t *testing.T) {
 	}
 }
 
+// waitFor 轮询 cond 直到为真（间隔 20ms，最长 5s）；cond 在测试 goroutine
+// 上执行，读取失败应返回 false 而不是 t.Fatal（超时才有诊断价值）。
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("等待超时：%s", what)
+}
+
+// 主动监听（IDLE）端到端：启动后先补一轮（初始 3 封落 2 笔），此后
+// INBOX 新邮件的 EXISTS 推送应立即触发增量导入——不等任何轮询周期。
+func TestRunListensAndImportsOnNewMail(t *testing.T) {
+	m, st, wid, _, user := newMailTestManager(t)
+	m.heartbeatEvery = 50 * time.Millisecond
+	m.retryInitial = 50 * time.Millisecond
+	m.retryMax = 200 * time.Millisecond
+	uID, _ := st.WorkspaceOwnerID(t.Context(), wid)
+	saveMailCfg(t, st, m.box, wid, uID, true, "")
+
+	if err := m.Start(t.Context(), wid); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { m.Stop(wid); m.Close() })
+
+	// 补轮先把初始邮件处理完，之后才谈得上「新邮件」。
+	waitFor(t, "初始补轮完成（2 笔）", func() bool {
+		entries, _, err := st.ListLedger(t.Context(), wid, "2026-10")
+		return err == nil && len(entries) == 2
+	})
+
+	appendMail(t, user, "深夜超市消费", "bank@example.com", "正文（假）：您消费 12.00 元")
+	waitFor(t, "IDLE 推送触发新邮件落账", func() bool {
+		entries, _, err := st.ListLedger(t.Context(), wid, "2026-10")
+		if err != nil {
+			return false
+		}
+		for _, e := range entries {
+			if strings.Contains(e.Note, "深夜超市消费") {
+				return true
+			}
+		}
+		return false
+	})
+
+	if !m.IsRunning(wid) {
+		t.Fatalf("落账后监听应仍在运行")
+	}
+}
+
+// 撤销对已建立的监听生效（与助手心跳同一安全不变式）：运行期间清除
+// 授权码，心跳复查发现后主动断开、自行退出并摘出 runs——不等 Stop，
+// 也不把撤销当成暂时故障无限重试。
+func TestRunExitsWhenCredentialsRevoked(t *testing.T) {
+	m, st, wid, _, _ := newMailTestManager(t)
+	m.heartbeatEvery = 50 * time.Millisecond
+	m.retryInitial = 50 * time.Millisecond
+	m.retryMax = 200 * time.Millisecond
+	uID, _ := st.WorkspaceOwnerID(t.Context(), wid)
+	saveMailCfg(t, st, m.box, wid, uID, true, "")
+
+	if err := m.Start(t.Context(), wid); err != nil {
+		t.Fatal(err)
+	}
+	// 刻意不 Stop：观察 run 自行退出。
+	t.Cleanup(m.Close)
+
+	waitFor(t, "补轮成功（LastRunOk=true）", func() bool {
+		cfg, err := st.GetMailConfig(t.Context(), wid)
+		return err == nil && cfg.LastRunOk != nil && *cfg.LastRunOk
+	})
+
+	// 运行期间撤销授权码（显式清除，非留空）。
+	if _, err := st.SaveMailConfig(t.Context(), wid, uID, store.MailConfigInput{
+		Enabled: true, Mailbox: testMailUser, ClearAuthCode: true,
+	}, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	waitFor(t, "撤销后监听自行退出", func() bool { return !m.IsRunning(wid) })
+
+	cfg, err := st.GetMailConfig(t.Context(), wid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.LastRunOk == nil || *cfg.LastRunOk || !strings.Contains(cfg.LastRunError, "撤销") {
+		t.Fatalf("退出原因应如实记录为撤销，得到 ok=%v err=%q", cfg.LastRunOk, cfg.LastRunError)
+	}
+}
+
+// 凭据变更触发重连：监听期间用新密文重存同一授权码（AES-GCM 随机
+// nonce，密文必变），心跳复查按 errCredsChanged 换新连接；重连后的补轮
+// 仍能把新邮件导入——用户旋转凭据不打断监听。
+func TestRunReconnectsWhenCredentialsChanged(t *testing.T) {
+	m, st, wid, _, user := newMailTestManager(t)
+	m.heartbeatEvery = 50 * time.Millisecond
+	m.retryInitial = 50 * time.Millisecond
+	m.retryMax = 200 * time.Millisecond
+	uID, _ := st.WorkspaceOwnerID(t.Context(), wid)
+	saveMailCfg(t, st, m.box, wid, uID, true, "")
+
+	if err := m.Start(t.Context(), wid); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { m.Stop(wid); m.Close() })
+
+	waitFor(t, "初始补轮完成（2 笔）", func() bool {
+		entries, _, err := st.ListLedger(t.Context(), wid, "2026-10")
+		return err == nil && len(entries) == 2
+	})
+
+	// 同一授权码重新加密保存：密文变化 = 凭据变更信号，明文未变。
+	enc, err := m.box.Seal(testMailCode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.SaveMailConfig(t.Context(), wid, uID, store.MailConfigInput{
+		Enabled: true, Mailbox: testMailUser, AuthCodeEnc: enc,
+	}, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	// 重连 + 补轮 + 重新进入 IDLE 都需要时间；新邮件落账即证明整条链路
+	// 在换密文后仍然活着（catch-up 扫到也说明重连成功）。
+	appendMail(t, user, "早餐消费", "bank@example.com", "正文（假）：您消费 6.00 元")
+	waitFor(t, "换密文重连后新邮件仍落账", func() bool {
+		entries, _, err := st.ListLedger(t.Context(), wid, "2026-10")
+		if err != nil {
+			return false
+		}
+		for _, e := range entries {
+			if strings.Contains(e.Note, "早餐消费") {
+				return true
+			}
+		}
+		return false
+	})
+
+	if !m.IsRunning(wid) {
+		t.Fatalf("换密文重连后监听应仍在运行")
+	}
+}
+
 // Test（测试连接）：表单值直接验证；空值回退已存配置；两者皆无则拒绝。
 func TestManagerTestConnection(t *testing.T) {
-	m, st, wid, _ := newMailTestManager(t)
+	m, st, wid, _, _ := newMailTestManager(t)
 	uID, _ := st.WorkspaceOwnerID(t.Context(), wid)
 	saveMailCfg(t, st, m.box, wid, uID, true, "")
 

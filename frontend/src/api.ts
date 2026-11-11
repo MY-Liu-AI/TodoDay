@@ -91,6 +91,32 @@ export interface WireHabit {
 
 const TIMEOUT = 12_000;
 
+/* fetch 在网络层被拒时请求根本到不了服务端（访问日志无记录），本地
+   toast 又只有一句笼统提示。把错误名/信息回传服务端落日志，用于诊断
+   「客户端失败但服务端无记录」这类问题。诊断价值大于实时性：失败很少
+   发生，且只在网络层失败时上报（keepalive 保证页面后续跳转也能发出）。 */
+function reportClientFailure(method: string, path: string, e: unknown) {
+  try {
+    const err = e as { name?: string; message?: string } | null;
+    void fetch("/api/client-log", {
+      method: "POST",
+      keepalive: true,
+      headers: {
+        "Content-Type": "application/json",
+        "X-Requested-With": "XMLHttpRequest",
+      },
+      body: JSON.stringify({
+        method,
+        path,
+        name: err?.name || "unknown",
+        message: String(err?.message || e).slice(0, 300),
+      }),
+    });
+  } catch {
+    /* 上报失败不影响主流程 */
+  }
+}
+
 /* 记账本：一笔收入或支出。date 是 YYYY-MM-DD 本地日历日期（与任务 due 同
  * 约定，不做时区换算）；category 是自由文本（六分类名之一），收入为 ""。 */
 export interface WireTx {
@@ -124,6 +150,23 @@ export interface WireBudgets {
   budgets: WireBudget[];
 }
 
+/* 分类体系：per-workspace 分类清单（首次读取服务端播种默认六分类）。
+ * 用户可增/改名/删；改名级联账本流水与预算（服务端单事务），删除被
+ * 在用流水挡住时回 409 category_in_use。邮箱账单的 Kimi 解析按这份
+ * 清单收敛分类。 */
+export interface WireCategory {
+  id: number;
+  name: string;
+  color: string;
+  position: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WireCategories {
+  categories: WireCategory[];
+}
+
 export async function api<T = any>(
   path: string,
   opts: { method?: string; body?: unknown; timeoutMs?: number } = {},
@@ -146,6 +189,7 @@ export async function api<T = any>(
     });
   } catch (e) {
     clearTimeout(timer);
+    reportClientFailure(method, path, e);
     throw new ApiError(0, "network", "网络异常或服务不可达");
   }
   clearTimeout(timer);

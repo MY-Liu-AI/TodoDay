@@ -16,15 +16,16 @@ import (
 	"tododay/internal/store"
 )
 
-// Manager 内嵌运行邮箱账单导入：每个工作区一条后台 goroutine，每日
-// 拉一次增量邮件，Kimi 解析后落账本。与助手 Manager 同构：
-// enabled 是持久化意图，running 是此刻有没有在跑。
+// Manager 内嵌运行邮箱账单导入：每个工作区一条后台 goroutine，挂一条
+// IMAP IDLE 长连接主动监听——新邮件到达（EXISTS 推送）即增量拉取，
+// Kimi 解析后落账本。与助手 Manager 同构：enabled 是持久化意图，
+// running 是此刻有没有在跑。
 //
 // 凭据来源（与助手同一套三态规则）：邮箱地址 + IMAP 授权码以密文落库。
 // 「已停用」「无凭据／已被撤销」一律不连接——Start 同步检查凭据存在性，
-// 缺失即失败；撤销（clearAuthCode）后下一轮凭据解析失败如实退出，
-// 不存在「所有者以为删了、循环还在跑」。只有「密文暂时无法解密」这类
-// 情况才把失败原因写进运行状态。
+// 缺失即失败；监听期间心跳周期性复查配置，撤销/停用对已建立的连接
+// 生效（主动断开并退出），不存在「所有者以为删了、监听还在跑」。只有
+// 「密文暂时无法解密/配置暂时读不到」这类情况才沿用旧连接或按退避重试。
 type Manager struct {
 	st  *store.Store
 	box *secretbox.Box
@@ -34,11 +35,18 @@ type Manager struct {
 	imapAddr  string
 	tlsConfig *tls.Config // 测试注入自签 CA；生产走系统根证书
 
-	// window/limits 是每日拉取的窗口：7 天、50 封上限。设成字段以便测试收紧。
-	window     time.Duration
-	listLimit  int
-	pollEvery  time.Duration // 每日一次；启动后先立即补一轮再按周期跑
-	firstRunIn time.Duration
+	// window/limits 是每轮增量扫描的窗口：7 天、50 封上限。新邮件唤醒时
+	// 以 mail_seen 去重，窗口只需覆盖「扫描间隔内可能积压的量」。设成
+	// 字段以便测试收紧。
+	window    time.Duration
+	listLimit int
+
+	// heartbeatEvery 是监听期间的心跳复查周期（凭据撤销/停用/变更对
+	// 已建立连接生效的落点，与助手心跳同一安全不变式）。连接级失败按
+	// retryInitial 起步指数退避重连，封顶 retryMax。
+	heartbeatEvery time.Duration
+	retryInitial   time.Duration
+	retryMax       time.Duration
 
 	// discoverWindow/limits 是「从邮箱发现发件人」的扫描窗口：30 天、200 封。
 	// 窗口比每日拉取宽——来源清单应当覆盖到账单邮件可能出现的频率。
@@ -65,13 +73,27 @@ var (
 	errAuthCodeBroken = errors.New("授权码无法解密（主密钥可能已更换），请重新填写")
 )
 
+// run/serve 之间的私有哨兵：errRevoked = 凭据被撤销/已停用，监听彻底退出
+// （不再重连）；errCredsChanged = 邮箱地址/授权码已变更，关闭当前连接换
+// 新凭据重连。两者都不写入运行状态——不是失败，是状态迁移。
+var (
+	errRevoked      = errors.New("邮箱账单导入已停用或凭据已撤销")
+	errCredsChanged = errors.New("邮箱凭据已变更")
+)
+
 const (
 	defaultWindow        = 7 * 24 * time.Hour
 	defaultListLimit     = 50
-	defaultPollEvery     = 24 * time.Hour
-	defaultFirstRunIn    = time.Minute
+	defaultHeartbeat     = time.Minute
+	defaultRetryInitial  = 5 * time.Second
+	defaultRetryMax      = 5 * time.Minute
 	defaultDiscoverWin   = 30 * 24 * time.Hour
 	defaultDiscoverLimit = 200
+	// maxConsecFailures 是防重试风暴的熔断：连续 N 次连接/登录失败就自动
+	// 停止导入（持久化 enabled=false，重启也不再拉起）。服务商对「频繁
+	// 失败连接」有反滥用限流（静默吊起/断连），无限退避重试会把工作区 IP
+	// 喂进黑名单；自动停止 + 设置页留痕让用户核对后手动再启动。
+	maxConsecFailures = 5
 )
 
 func NewManager(st *store.Store, box *secretbox.Box) *Manager {
@@ -80,7 +102,8 @@ func NewManager(st *store.Store, box *secretbox.Box) *Manager {
 		st: st, box: box,
 		imapAddr: os.Getenv("TODO_MAIL_IMAP_ADDR"),
 		window:   defaultWindow, listLimit: defaultListLimit,
-		pollEvery: defaultPollEvery, firstRunIn: defaultFirstRunIn,
+		heartbeatEvery: defaultHeartbeat,
+		retryInitial:   defaultRetryInitial, retryMax: defaultRetryMax,
 		discoverWindow: defaultDiscoverWin, discoverLimit: defaultDiscoverLimit,
 		ctx: ctx, cancel: cancel,
 		runs: map[int64]*run{},
@@ -132,11 +155,8 @@ func (m *Manager) Start(ctx context.Context, wid int64) error {
 	m.runs[wid] = r
 	m.mu.Unlock()
 
-	go func() {
-		defer close(r.done)
-		m.loop(runCtx, wid)
-	}()
-	log.Printf("mailimport: 工作区 %d 邮箱账单导入已启动（每日一次）", wid)
+	go m.run(runCtx, wid, r)
+	log.Printf("mailimport: 工作区 %d 邮箱账单导入已启动（IDLE 主动监听）", wid)
 	return nil
 }
 
@@ -196,54 +216,105 @@ func (m *Manager) Close() {
 	}
 }
 
-// loop 每日循环：启动后先补一轮（保证重启当天的账单不丢），再按周期跑。
-func (m *Manager) loop(ctx context.Context, wid int64) {
-	timer := time.NewTimer(m.firstRunIn)
-	defer timer.Stop()
+// run 是工作区监听的完整生命周期：一条连接 serve 到底，连接级失败按
+// 指数退避重连；凭据撤销/停用立即退出并自行从 runs 摘除（removeRun 只
+// 摘仍是自己的条目——Stop/Close 可能已经摘掉）。失败记录遵循「谁发现谁
+// 记录」：serve/scan 在失败发生处写运行状态，这里只负责调度。
+func (m *Manager) run(ctx context.Context, wid int64, r *run) {
+	defer close(r.done)
+	defer m.removeRun(wid, r)
+	backoff := m.retryInitial
+	consec := 0
 	for {
+		if ctx.Err() != nil {
+			return
+		}
+		err := m.serve(ctx, wid)
+		if ctx.Err() != nil {
+			return
+		}
+		switch {
+		case err == nil:
+			return
+		case errors.Is(err, errRevoked):
+			// 撤销/停用：如实留痕（设置页可见监听为何停止）并退出，不重连。
+			m.recordRun(ctx, wid, err)
+			log.Printf("mailimport: 工作区 %d 监听退出：凭据已撤销或已停用", wid)
+			return
+		case errors.Is(err, errCredsChanged):
+			log.Printf("mailimport: 工作区 %d 凭据已变更，换新凭据重连", wid)
+			backoff = m.retryInitial
+			consec = 0
+		case errors.Is(err, ErrAuth):
+			// 认证失败重试无意义，持续重试还会触发服务商限流：如实留痕、
+			// 持久化停用（进程重启不再自动拉起），核对凭据后手动启动。
+			m.recordRun(ctx, wid, errors.New("邮箱授权码无效或 IMAP 服务未开启，导入已自动停止：请核对授权码并确认已开启 IMAP/SMTP 服务，然后在设置页重新启动"))
+			if derr := m.st.SetMailEnabled(ctx, wid, false); derr != nil {
+				log.Printf("mailimport: 记录停止状态失败：%v", derr)
+			}
+			log.Printf("mailimport: 工作区 %d 认证失败，已自动停止导入（防重试风暴）", wid)
+			return
+		default:
+			consec++
+			if consec >= maxConsecFailures {
+				m.recordRun(ctx, wid, errors.New("连续多次连接失败，导入已自动停止：可能是网络异常或邮箱服务商临时限流，请稍后在设置页重新启动"))
+				if derr := m.st.SetMailEnabled(ctx, wid, false); derr != nil {
+					log.Printf("mailimport: 记录停止状态失败：%v", derr)
+				}
+				log.Printf("mailimport: 工作区 %d 连续 %d 次连接失败，已自动停止导入（防重试风暴）", wid, consec)
+				return
+			}
+			log.Printf("mailimport: 工作区 %d 连接中断，%v 后重连：%v", wid, backoff, err)
+		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-timer.C:
-			if err := m.RunOnce(ctx, wid); err != nil {
-				// 失败已记入运行状态（设置页可见），这里只留日志。
-				log.Printf("mailimport: 工作区 %d 本轮导入失败：%v", wid, err)
+		case <-time.After(backoff):
+		}
+		if backoff < m.retryMax {
+			backoff *= 2
+			if backoff > m.retryMax {
+				backoff = m.retryMax
 			}
-			timer.Reset(m.pollEvery)
 		}
 	}
 }
 
-// RunOnce 执行一轮导入（启动补轮与每日轮询共用，测试也直接调它）。
-// 只把「本轮整体失败」作为 error 返回；单封邮件的处理失败记入运行状态
-// 且不中断其余邮件。
-func (m *Manager) RunOnce(ctx context.Context, wid int64) error {
+// removeRun 让退出的 run 自己从 runs 摘除（只摘除仍是自己——Stop/Close
+// 可能已经摘掉并换上了新 run，不能误删）。
+func (m *Manager) removeRun(wid int64, r *run) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if cur, ok := m.runs[wid]; ok && cur == r {
+		delete(m.runs, wid)
+	}
+}
+
+// serve 单条 IMAP 连接的生命周期：先补一轮（重启/断线期间攒下的邮件不
+// 因换连接而丢），再进入 IDLE 主动监听——新邮件到达（EXISTS 推送）即增
+// 量导入；心跳周期性复查凭据，撤销/停用生效于当前连接，变更触发重连。
+// 返回：nil = ctx 取消正常退出；errRevoked = 撤销/停用；errCredsChanged =
+// 凭据变更；其余 = 连接级/扫描级失败，外层按退避重连。
+func (m *Manager) serve(ctx context.Context, wid int64) error {
 	cfg, err := m.st.GetMailConfig(ctx, wid)
 	if errors.Is(err, store.ErrNotFound) {
-		return ErrNotConfigured
+		return errRevoked
 	}
 	if err != nil {
 		return err
 	}
-
-	ownerID, err := m.st.WorkspaceOwnerID(ctx, wid)
-	if err != nil {
-		return err
+	if !cfg.Enabled {
+		return errRevoked
 	}
-
-	// 凭据解析：邮箱地址 + 授权码。无凭据/已撤销不连接；密文无法解密
-	// 是「暂时取不到」之外的硬失败，如实记录并返回。
+	// 凭据解析（三态规则见 credentials）：无凭据/已撤销 → 退出监听；
+	// 主密钥缺失/密文损坏如实记录后按退避重试（用户可能在服务端补配）。
 	mailbox, authCode, cerr := m.credentials(ctx, cfg)
 	if cerr != nil {
 		m.recordRun(ctx, wid, cerr)
+		if errors.Is(cerr, ErrNoCredentials) {
+			return errRevoked
+		}
 		return cerr
-	}
-
-	// Kimi 凭据共用助手配置：没配就连解析都谈不上，如实失败。
-	kimi, err := m.kimi(ctx, wid)
-	if err != nil {
-		m.recordRun(ctx, wid, err)
-		return err
 	}
 
 	loc, err := m.location(ctx, wid)
@@ -258,6 +329,127 @@ func (m *Manager) RunOnce(ctx context.Context, wid int64) error {
 	}
 	defer sess.Close()
 
+	if err := m.scan(ctx, wid, sess, cfg); err != nil {
+		return err
+	}
+
+	hb := time.NewTicker(m.heartbeatEvery)
+	defer hb.Stop()
+	for {
+		idle, err := sess.Idle()
+		if err != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			_ = idle.Close()
+			return nil
+		case <-sess.Notify():
+			if err := idle.Close(); err != nil {
+				return err
+			}
+			// Wait 等服务器确认 IDLE 结束再发命令；连接已死则返回重连。
+			if err := sess.WaitIdle(idle); err != nil {
+				return err
+			}
+			// 增量扫描；扫描期间后到的推送会留在 Notify（容量 1），
+			// 下一轮 select 立即再扫一轮，窗口内不丢邮件。
+			if err := m.scan(ctx, wid, sess, cfg); err != nil {
+				return err
+			}
+		case <-hb.C:
+			if err := idle.Close(); err != nil {
+				return err
+			}
+			if err := sess.WaitIdle(idle); err != nil {
+				return err
+			}
+			// 心跳复查凭据：撤销必须对已建立的连接生效。
+			if err := m.recheck(ctx, wid, cfg.Mailbox, cfg.AuthCodeEnc); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+// recheck 是监听期间的心跳复查（与助手心跳同一安全不变式）：停用/
+// 无凭据/已撤销 → errRevoked（主动断开并退出）；邮箱地址或授权码密文
+// 变了 → errCredsChanged（换新凭据重连）。AES-GCM 随机 nonce，重存即
+// 变，密文相同即凭据未动，无需解密。读 store 暂时失败沿用旧连接——
+// 把暂时故障误判成撤销是 fail-open，反过来才对。
+func (m *Manager) recheck(ctx context.Context, wid int64, mailbox, authCodeEnc string) error {
+	cfg, err := m.st.GetMailConfig(ctx, wid)
+	if errors.Is(err, store.ErrNotFound) {
+		return errRevoked
+	}
+	if err != nil {
+		log.Printf("mailimport: 工作区 %d 心跳复查读配置失败（沿用旧连接）：%v", wid, err)
+		return nil
+	}
+	if !cfg.Enabled || cfg.Mailbox == "" || cfg.AuthCodeEnc == "" {
+		return errRevoked
+	}
+	if cfg.Mailbox != mailbox || cfg.AuthCodeEnc != authCodeEnc {
+		return errCredsChanged
+	}
+	return nil
+}
+
+// RunOnce 执行一轮导入：建一条临时会话补扫窗口内未处理的邮件。运行期
+// 不走这里——serve 的长连接先补轮、之后靠 IDLE 唤醒逐轮 scan；保留它
+// 是给测试与手动触发一个入口。
+func (m *Manager) RunOnce(ctx context.Context, wid int64) error {
+	cfg, err := m.st.GetMailConfig(ctx, wid)
+	if errors.Is(err, store.ErrNotFound) {
+		return ErrNotConfigured
+	}
+	if err != nil {
+		return err
+	}
+
+	// 凭据解析：无凭据/已撤销不连接；密文无法解密是硬失败，如实记录。
+	mailbox, authCode, cerr := m.credentials(ctx, cfg)
+	if cerr != nil {
+		m.recordRun(ctx, wid, cerr)
+		return cerr
+	}
+
+	loc, err := m.location(ctx, wid)
+	if err != nil {
+		return err
+	}
+
+	sess, err := m.transport().Open(ctx, mailbox, authCode, loc)
+	if err != nil {
+		m.recordRun(ctx, wid, err)
+		return err
+	}
+	defer sess.Close()
+
+	return m.scan(ctx, wid, sess, cfg)
+}
+
+// scan 用一条已建立的会话跑一轮增量导入：serve 的补轮与 IDLE 唤醒、
+// RunOnce 都走这里。只把「本轮整体失败」作为 error 返回；单封邮件的
+// 处理失败记入运行状态且不中断其余邮件。
+func (m *Manager) scan(ctx context.Context, wid int64, sess *Session, cfg *store.MailConfig) error {
+	ownerID, err := m.st.WorkspaceOwnerID(ctx, wid)
+	if err != nil {
+		return err
+	}
+
+	// Kimi 凭据共用助手配置：没配就连解析都谈不上，如实失败。
+	kimi, err := m.kimi(ctx, wid)
+	if err != nil {
+		m.recordRun(ctx, wid, err)
+		return err
+	}
+
+	loc, err := m.location(ctx, wid)
+	if err != nil {
+		return err
+	}
+
 	msgs, err := sess.List(ctx, time.Now().Add(-m.window), m.listLimit)
 	if err != nil {
 		m.recordRun(ctx, wid, err)
@@ -265,6 +457,17 @@ func (m *Manager) RunOnce(ctx context.Context, wid int64) error {
 	}
 
 	senders := splitSenders(cfg.Senders)
+	// 分类清单驱动解析收敛：Kimi 只能从这份工作区分类里选（用户在前端
+	// 调整分类后，后续解析随之生效）。读取失败不拖垮整轮——用兜底清单。
+	cats, err := m.st.ListLedgerCategories(ctx, wid)
+	if err != nil {
+		log.Printf("mailimport: 读取分类清单失败，本轮用默认分类：%v", err)
+		cats = nil
+	}
+	catNames := make([]string, len(cats))
+	for i, c := range cats {
+		catNames[i] = c.Name
+	}
 	now := time.Now()
 	imported, skipped, parseFailed := 0, 0, 0
 	for _, msg := range msgs {
@@ -292,7 +495,7 @@ func (m *Manager) RunOnce(ctx context.Context, wid int64) error {
 			parseFailed++
 			continue
 		}
-		bill, err := kimi.ParseBill(ctx, full.From, full.Subject, full.Body, now, loc)
+		bill, err := kimi.ParseBill(ctx, full.From, full.Subject, full.Body, now, loc, catNames)
 		if err != nil {
 			log.Printf("mailimport: 解析邮件 %s 失败：%v", msg.ID, err)
 			parseFailed++

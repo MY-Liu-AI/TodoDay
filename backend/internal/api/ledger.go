@@ -201,6 +201,7 @@ func (s *Server) putLedgerBudget(w http.ResponseWriter, r *http.Request, u *stor
 	s.listLedgerBudgets(w, r, u, wid)
 }
 
+// deleteLedgerBudget 按分类删除预算；不存在返回 ErrNotFound。
 func (s *Server) deleteLedgerBudget(w http.ResponseWriter, r *http.Request, u *store.User, wid int64) {
 	category := r.PathValue("category")
 	if err := s.st.DeleteLedgerBudget(r.Context(), wid, category); err != nil {
@@ -208,6 +209,68 @@ func (s *Server) deleteLedgerBudget(w http.ResponseWriter, r *http.Request, u *s
 		return
 	}
 	s.listLedgerBudgets(w, r, u, wid)
+}
+
+// ── 分类体系：per-workspace 分类清单（增/改名/删）。与账目/预算同边界：
+// 成员级。改名级联账本流水与预算（store 层单事务）；删除被在用流水挡住
+// 时回 409。写操作响应都回全量列表——客户端直接替换，不做合并。
+// 邮箱账单解析（Kimi）按这份清单收敛：模型分类不在清单内归「其他」。
+
+func (s *Server) listLedgerCategories(w http.ResponseWriter, r *http.Request, u *store.User, wid int64) {
+	categories, err := s.st.ListLedgerCategories(r.Context(), wid)
+	if err != nil {
+		mapStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"categories": categories})
+}
+
+func (s *Server) addLedgerCategory(w http.ResponseWriter, r *http.Request, u *store.User, wid int64) {
+	var in struct {
+		Name string `json:"name"`
+	}
+	if err := decodeJSON(r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, "validation_failed", "请求格式错误")
+		return
+	}
+	if _, err := s.st.AddLedgerCategory(r.Context(), wid, in.Name); err != nil {
+		mapStoreError(w, err)
+		return
+	}
+	s.listLedgerCategories(w, r, u, wid)
+}
+
+func (s *Server) renameLedgerCategory(w http.ResponseWriter, r *http.Request, u *store.User, wid int64) {
+	cid, err := strconv.ParseInt(r.PathValue("cid"), 10, 64)
+	if err != nil || cid <= 0 {
+		writeError(w, http.StatusBadRequest, "validation_failed", "无效的分类 ID")
+		return
+	}
+	var in struct {
+		Name string `json:"name"`
+	}
+	if err := decodeJSON(r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, "validation_failed", "请求格式错误")
+		return
+	}
+	if _, err := s.st.RenameLedgerCategory(r.Context(), wid, cid, in.Name); err != nil {
+		mapStoreError(w, err)
+		return
+	}
+	s.listLedgerCategories(w, r, u, wid)
+}
+
+func (s *Server) deleteLedgerCategory(w http.ResponseWriter, r *http.Request, u *store.User, wid int64) {
+	cid, err := strconv.ParseInt(r.PathValue("cid"), 10, 64)
+	if err != nil || cid <= 0 {
+		writeError(w, http.StatusBadRequest, "validation_failed", "无效的分类 ID")
+		return
+	}
+	if err := s.st.DeleteLedgerCategory(r.Context(), wid, cid); err != nil {
+		mapStoreError(w, err)
+		return
+	}
+	s.listLedgerCategories(w, r, u, wid)
 }
 
 func parseEID(w http.ResponseWriter, r *http.Request) (int64, bool) {

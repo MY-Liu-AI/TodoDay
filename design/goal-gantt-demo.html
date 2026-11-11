@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>目标进度甘特 · 重设计 demo</title>
+<style>
+  /* 字体与 app 完全同源：同一批 @font-face + 同一套 --sans/--mono 栈
+     （kit.css 与 planner.css）。相对路径指向 repo 内的 font 文件，
+     浏览器从 file:// 直接打开 demo 也能渲染出与 app 一致的字体；
+     文件不可达时按栈内顺序回落到系统字体。 */
+  @font-face{font-family:"Geist Variable";font-style:normal;font-weight:100 900;font-display:swap;
+    src:url("../frontend/public/fonts/geist-latin-wght.woff2") format("woff2");}
+  @font-face{font-family:"Geist Mono Variable";font-style:normal;font-weight:100 900;font-display:swap;
+    src:url("../frontend/public/fonts/geist-mono-latin-wght.woff2") format("woff2");}
+  @font-face{font-family:"Noto Sans SC";font-style:normal;font-weight:100 900;font-display:swap;
+    src:url("../frontend/public/fonts/noto-sans-sc.woff2") format("woff2");}
+
+  /* ── 设计 token：与 app（planner.css）同名变量，浅色默认、可切深色 ── */
+  :root {
+    --sans: "Geist Variable", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", ui-sans-serif, sans-serif;
+    --mono: "Geist Mono Variable", ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+    --accent: oklch(0.49 0.085 185);
+    --accent-ink: #fff;
+    --panel: #fff;
+    --raised: #f3f6f4;
+    --hover: rgba(22, 28, 24, 0.045);
+    --ink: #232a26;
+    --muted: #656d68;
+    --faint: #99a29b;
+    --line: #e3e7e4;
+    --line-soft: #edf0ee;
+    --weekend: rgba(28, 34, 30, 0.035);
+    --late: oklch(0.5 0.13 33); /* 状态色：仅「逾期」语义，非装饰 */
+    --shadow: 0 8px 24px rgb(0 0 0 / 0.12);
+    --r-md: 10px;
+    --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  }
+  :root[data-theme="dark"] {
+    --accent: oklch(0.79 0.09 177);
+    --accent-ink: #14201c;
+    --panel: #1e2320;
+    --raised: #262c28;
+    --hover: rgba(235, 242, 237, 0.05);
+    --ink: #e7ece8;
+    --muted: #b4beb6;
+    --faint: #7d877f;
+    --line: #39423b;
+    --line-soft: #303830;
+    --weekend: rgba(235, 242, 237, 0.04);
+    --late: oklch(0.74 0.12 40);
+    --shadow: 0 8px 24px rgb(0 0 0 / 0.4);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--panel);
+    color: var(--ink);
+    font: 14px/1.5 var(--sans);
+    transition: background 0.2s var(--ease), color 0.2s var(--ease);
+  }
+  .page { max-width: 1160px; margin: 0 auto; padding: 24px 28px 64px; }
+
+  .page-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 14px; }
+  .page-head h1 { font-size: 18px; margin: 0; }
+  .page-head p { margin: 0; color: var(--muted); font-size: 12px; }
+  .controls { margin-left: auto; display: flex; gap: 8px; }
+  .controls button {
+    font: inherit; font-size: 12px; padding: 5px 12px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--muted);
+    cursor: pointer; transition: all 0.15s var(--ease);
+  }
+  .controls button.is-active { border-color: var(--accent); color: var(--accent); }
+
+  /* ── 甘特 ───────────────────────────────────────────────────────
+     三列（标签/时间轨/元信息）与线上版同一套列宽变量，可整体搬回
+     planner.css。刻度尺、网格线、周末块、今天线、条带共用同一组
+     left/width 百分比（pos() 一个函数），天然对齐。 */
+  .gantt {
+    --gantt-label: 132px;
+    --gantt-meta: 96px;
+    --gantt-gap: 12px;
+    min-width: 640px;
+  }
+  .gantt-scroll { overflow-x: auto; }
+
+  /* 刻度尺：月份带 + 日/周刻度，铺满整个数据轴。三列与行一致，
+     月份带与刻度行的中间列都是时间轨。 */
+  .ruler {
+    display: grid;
+    grid-template-columns: var(--gantt-label) 1fr var(--gantt-meta);
+    gap: 2px var(--gantt-gap);
+    border-bottom: 1px solid var(--line);
+  }
+  .ruler-band { grid-column: 2 / 3; position: relative; height: 22px; }
+  .ruler-month {
+    position: absolute; top: 0; bottom: 0;
+    border-left: 1px solid var(--line);
+    padding: 3px 0 0 6px;
+    font-size: 10px; color: var(--muted); white-space: nowrap;
+  }
+  .ruler-ticks { grid-column: 2 / 3; position: relative; height: 18px; }
+  .tick {
+    position: absolute; bottom: 0;
+    width: 1px; height: 6px; background: var(--line);
+  }
+  .tick.is-label { height: 9px; }
+  .tick-label {
+    position: absolute; bottom: 8px; transform: translateX(-50%);
+    font-family: var(--mono); font-size: 9.5px; color: var(--faint);
+    white-space: nowrap;
+  }
+  .tick-label.is-start { transform: none; }
+  .tick-label.is-end { transform: translateX(-100%); }
+  /* 今天尺签：小三角指着刻度，文字贴尺，不占图表上空。 */
+  .today-tab {
+    position: absolute; bottom: -1px; transform: translateX(-50%);
+    font-size: 9.5px; font-weight: 600; color: var(--accent);
+    background: var(--panel); padding: 0 4px 1px; border-radius: 3px 3px 0 0;
+    white-space: nowrap; z-index: 2;
+  }
+  .today-tab::after {
+    content: ""; position: absolute; left: 50%; bottom: -4px;
+    transform: translateX(-50%);
+    border: 4px solid transparent; border-bottom: none;
+    border-top: 4px solid var(--accent);
+  }
+
+  /* 绘图区：参考层（网格线/周末块/今天线）用与 app 相同的 calc 偏移钉在
+     中间列，百分比以时间轨宽度为底，与条带、刻度天然同源对齐
+     （若拿整个绘图区宽度当底，参考层会左偏一个标签列）。 */
+  .plot { position: relative; padding-top: 8px; }
+  .under {
+    position: absolute; top: 8px; bottom: 0;
+    left: calc(var(--gantt-label) + var(--gantt-gap));
+    width: calc(100% - var(--gantt-label) - var(--gantt-meta) - 2 * var(--gantt-gap));
+    z-index: 0;
+  }
+  .gridline {
+    position: absolute; top: 0; bottom: 0; width: 1px;
+    background: var(--line-soft); z-index: 0; pointer-events: none;
+  }
+  .gridline.is-week { background: var(--line); }
+  .weekend {
+    position: absolute; top: 0; bottom: 0;
+    background: var(--weekend); z-index: 0; pointer-events: none;
+  }
+  .today-line {
+    position: absolute; top: 0; bottom: 0; width: 1.5px; margin-left: -0.75px;
+    background: var(--accent); opacity: 0.55; z-index: 0; pointer-events: none;
+  }
+
+  .group { position: relative; z-index: 1; padding-bottom: 2px; }
+  .group + .group { margin-top: 26px; }
+  .group-head {
+    display: flex; align-items: baseline; gap: 8px; margin: 14px 0 6px;
+  }
+  .group-head .t {
+    font-size: 13px; font-weight: 600; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap;
+  }
+  .group-head .pct { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--accent); flex: none; }
+  /* 已完成里程碑折进组头这枚小签，不占行（全完成的目标整组不进图）。 */
+  .done-chip {
+    flex: none; font-size: 10px; color: var(--faint);
+    border: 1px solid var(--line-soft); border-radius: 999px; padding: 1px 8px;
+  }
+
+  .row {
+    display: grid;
+    grid-template-columns: var(--gantt-label) 1fr var(--gantt-meta);
+    gap: var(--gantt-gap);
+    align-items: center; height: 32px;
+    border-radius: 6px;
+    transition: background 0.12s var(--ease);
+  }
+  @media (hover: hover) { .row:hover { background: var(--hover); } }
+  .row-label {
+    font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    padding-left: 4px;
+  }
+  .row-label .dot {
+    display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent); margin-right: 6px; vertical-align: 1px;
+  }
+  .track { position: relative; height: 100%; }
+  /* 胶囊条：底槽中性色、主色实心填充 = 子任务完成度；开放端虚线描边。 */
+  .bar {
+    position: absolute; top: 50%; transform: translateY(-50%);
+    height: 14px; min-width: 14px; border-radius: 999px;
+    background: var(--line-soft); overflow: hidden; z-index: 1;
+  }
+  .bar.open-end { border-top-right-radius: 4px; border-bottom-right-radius: 4px; border-right: 1.5px dashed var(--accent); }
+  .bar.open-start { border-top-left-radius: 4px; border-bottom-left-radius: 4px; border-left: 1.5px dashed var(--accent); }
+  /* 被过去窗口截断的条带：左缘虚线 = 「延伸进更早的过去」，逾期天数看元信息。 */
+  .bar.clip-past {
+    border-top-left-radius: 4px; border-bottom-left-radius: 4px;
+    border-left: 1.5px dashed var(--accent);
+  }
+  .bar .fill { display: block; height: 100%; border-radius: inherit; background: var(--accent); }
+  /* 未排期：虚线框胶囊，中性色，示意「还没上时间轴」。 */
+  .bar-undated {
+    position: absolute; top: 50%; transform: translateY(-50%);
+    width: 96px; height: 14px; border-radius: 999px;
+    border: 1px dashed var(--faint); z-index: 1;
+  }
+  .row-meta {
+    font-family: var(--mono); font-size: 10.5px; color: var(--muted);
+    text-align: right; padding-right: 4px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .row-meta .late { color: var(--late); font-weight: 600; }
+  .empty { padding: 30px 0 34px; text-align: center; color: var(--faint); font-size: 12px; }
+
+  /* Tooltip：悬停行跟随。 */
+  .tip {
+    position: fixed; z-index: 50; pointer-events: none;
+    background: var(--raised); color: var(--ink);
+    border: 1px solid var(--line); border-radius: 8px;
+    box-shadow: var(--shadow); padding: 8px 11px;
+    font-size: 12px; line-height: 1.6; max-width: 260px;
+    opacity: 0; transition: opacity 0.12s var(--ease);
+  }
+  .tip b { font-size: 12px; }
+  .tip .meta { color: var(--muted); font-size: 11px; }
+  .tip .meta em { font-style: normal; font-family: var(--mono); }
+
+  .legend { display: flex; gap: 16px; margin-top: 18px; font-size: 11px; color: var(--muted); }
+  .legend i { display: inline-block; width: 14px; height: 8px; border-radius: 999px; background: var(--line-soft); vertical-align: -1px; margin-right: 5px; }
+  .legend i.fill { background: var(--accent); }
+  .legend i.open { background: transparent; border: 1px dashed var(--accent); height: 8px; }
+  .legend i.undated { background: transparent; border: 1px dashed var(--faint); width: 18px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="page-head">
+    <h1>目标进度</h1>
+    <p>市场调研后的重设计 demo · 数据形状与线上 WireGoal 一致</p>
+    <div class="controls">
+      <button id="gran-day" class="is-active">日</button>
+      <button id="gran-week">周</button>
+      <button id="theme">深色</button>
+    </div>
+  </div>
+
+  <div class="gantt-scroll">
+    <div class="gantt" id="gantt">
+      <div class="ruler">
+        <div class="ruler-band" id="ruler-band"></div>
+        <div class="ruler-ticks" id="ruler-ticks"></div>
+      </div>
+      <div class="plot" id="plot"></div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <span><i></i>排期跨度</span>
+    <span><i class="fill"></i>子任务完成度</span>
+    <span><i class="open"></i>单边日期／左缘虚线 = 延伸进更早过去</span>
+    <span><i class="undated"></i>未排期</span>
+    <span>已完成项收进组头不占行；逾期天数看右侧与悬停</span>
+  </div>
+</div>
+
+<div class="tip" id="tip"></div>
+
+<script>
+"use strict";
+/* ── 种子数据：与线上 activeGoals（WireGoal）同形 ─────────────── */
+const NOW = new Date(2026, 10, 11, 12, 0, 0).getTime(); /* 2026-11-11 中午 */
+const GOALS = [
+  { id: 11, title: "持续优化 Todo Day", milestones: [
+    { id: 1, title: "记账本功能完善", start: "2026-10-28", due: "2026-10-30", done: 3, total: 3 },
+    { id: 2, title: "我的目标优化", start: "2026-11-01", due: "2026-11-07", done: 0, total: 2 },
+    { id: 3, title: "番茄专注优化", start: "2026-11-01", due: "2026-11-07", done: 0, total: 0 },
+    { id: 4, title: "首页功能完善", start: "2026-11-02", due: "2026-11-08", done: 0, total: 3 },
+    { id: 5, title: "我的计划功能优化", start: "2026-11-02", due: "2026-11-06", done: 0, total: 2 },
+    { id: 6, title: "习惯优化", start: "2026-11-15", due: "2026-11-21", done: 0, total: 1 },
+  ]},
+  { id: 16, title: "TX82 device-plugin 开发", milestones: [
+    { id: 7, title: "验证模拟环境可用性", start: "2026-10-27", due: "2026-10-31", done: 0, total: 2 },
+    { id: 8, title: "将 tx81 移植到该项目", start: "2026-10-29", due: "2026-10-31", done: 0, total: 2 },
+    { id: 9, title: "性能基线回归（开放）", start: "2026-11-05", due: "", done: 0, total: 1 },
+    { id: 10, title: "发布评审（只定截止）", start: "", due: "2026-11-20", done: 0, total: 1 },
+    { id: 13, title: "历史遗留优化（逾期很久）", start: "2026-09-20", due: "2026-10-10", done: 0, total: 1 },
+  ]},
+  { id: 20, title: "性能探针目标 · 样例组", milestones: [
+    { id: 11, title: "里程碑1（未排期）", start: "", due: "", done: 0, total: 1 },
+    { id: 12, title: "里程碑2（未排期）", start: "", due: "", done: 0, total: 0 },
+  ]},
+  { id: 24, title: "已收官的旧目标（全完成，整组不进图）", milestones: [
+    { id: 14, title: "全部做完的旧事", start: "2026-09-01", due: "2026-09-30", done: 2, total: 2 },
+  ]},
+];
+
+/* ── 纯逻辑（可原样搬进 lib/goalcharts.js 的同类函数） ───────── */
+const DAY = 86400000;
+function tsOf(date) {
+  const [y, m, d] = date.split("-").map(Number);
+  return new Date(y, m - 1, d).getTime();
+}
+function midnight(ts) { const d = new Date(ts); return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(); }
+const OPEN_SPAN = 7 * DAY;
+const MIN_AXIS = 14 * DAY;
+const PAD_RATIO = 0.04;
+/* 视窗（效率复核 2026-11-11）：过去固定 7 天——更早的条带左缘虚线截断，
+   逾期多久看「逾期 n 天」文字而非条带长度；未来至少 28 天，随最远
+   截止日延展（截止日必须可见）。今天因此稳定在轴左侧 ~1/5 处。 */
+const PAST = 7 * DAY;
+const FUTURE_MIN = 28 * DAY;
+
+function spanOf(m) {
+  const s = m.start ? tsOf(m.start) : null;
+  const e = m.due ? tsOf(m.due) : null;
+  if (s !== null && e !== null) return { s, e, kind: "range" };
+  if (s !== null) return { s, e: s + OPEN_SPAN, kind: "open-end" };
+  if (e !== null) return { s: e - OPEN_SPAN, e, kind: "open-start" };
+  return null;
+}
+
+/* 轴 + 可见行。已完成的里程碑（total>0 且 done>=total；total=0 视为未拆解、
+   仍占行）不参与定轴、不占行——过去不再被做完的事撑开，今天稳定在轴左。
+   行数只跟「未完成」走，不会随时间无限累计。 */
+function axisOf(goals, now = NOW) {
+  const vis = goals.map((g) => {
+    const milestones = g.milestones.filter((m) => !(m.total > 0 && m.done >= m.total));
+    return {
+      ...g,
+      milestones,
+      doneCount: g.milestones.length - milestones.length,
+      totalAll: g.milestones.reduce((n, m) => n + m.total, 0),
+      doneAll: g.milestones.reduce((n, m) => n + m.done, 0),
+    };
+  }).filter((g) => g.milestones.length > 0);
+  if (vis.length === 0) return null;
+  let hi = null;
+  for (const g of vis) for (const m of g.milestones) {
+    const sp = spanOf(m);
+    if (sp) hi = hi === null ? sp.e : Math.max(hi, sp.e);
+  }
+  const todayTs = midnight(now);
+  let from = todayTs - PAST;
+  let to = Math.max(hi !== null ? hi : 0, todayTs + FUTURE_MIN);
+  if (to - from < MIN_AXIS) to = from + MIN_AXIS;
+  const pad = (to - from) * PAD_RATIO;
+  from = Math.max(midnight(from - pad), todayTs - PAST); /* 过去窗钉死 7 天，pad 不多占 */
+  to = midnight(to + pad) + DAY; /* 轴尾含最后一天整天 */
+  const todayPos = todayTs >= from && todayTs <= to ? (todayTs - from) / (to - from) * 100 : null;
+  return { from, to, todayTs, todayPos, vis };
+}
+
+/* 时间尺刻度：日 = 等距 2 天起步（锚定轴首，跨月间距恒定），轴变长时
+   按「好看的天数步长」放大间隔，保证标签不重叠；周 = 每周一。
+   刻度铺满整个数据轴，不再从今天起排。 */
+const DAY_STEPS = [1, 2, 3, 5, 7, 10, 14, 21, 30];
+function dayStepOf(axis) {
+  const spanDays = (axis.to - axis.from) / DAY;
+  for (const s of DAY_STEPS) if (spanDays / s <= 16) return s;
+  return 30;
+}
+function ticksOf(axis, gran) {
+  const out = [];
+  const step = gran === "day" ? dayStepOf(axis) : 7;
+  for (let ts = axis.from; ts < axis.to; ts += DAY) {
+    const d = new Date(ts);
+    const k = Math.round((ts - axis.from) / DAY);
+    const hit = gran === "day" ? k % step === 0 : d.getDay() === 1;
+    if (hit) out.push({ ts, label: `${d.getMonth() + 1}/${d.getDate()}`, week: d.getDay() === 1 });
+  }
+  return out;
+}
+function weekendsOf(axis) {
+  const out = [];
+  for (let ts = axis.from; ts < axis.to; ts += DAY) {
+    const dow = new Date(ts).getDay();
+    if (dow === 0 || dow === 6) out.push(ts);
+  }
+  return out;
+}
+function monthsOf(axis) {
+  const out = [];
+  const f = new Date(axis.from);
+  let cur = new Date(f.getFullYear(), f.getMonth(), 1);
+  while (cur.getTime() < axis.to) {
+    const next = new Date(cur.getFullYear(), cur.getMonth() + 1, 1);
+    const s = Math.max(cur.getTime(), axis.from);
+    const e = Math.min(next.getTime(), axis.to);
+    out.push({ s, e, label: `${cur.getFullYear()} 年 ${cur.getMonth() + 1} 月` });
+    cur = next;
+  }
+  return out;
+}
+
+/* ── 渲染 ─────────────────────────────────────────────────────── */
+const $ = (id) => document.getElementById(id);
+const pos = (axis, ts) => (ts - axis.from) / (axis.to - axis.from) * 100;
+const width = (axis, s, e) => (e - s) / (axis.to - axis.from) * 100;
+const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+let gran = "day";
+
+function render() {
+  const axis = axisOf(GOALS);
+  if (!axis) {
+    $("ruler-band").innerHTML = "";
+    $("ruler-ticks").innerHTML = "";
+    $("plot").innerHTML = `<div class="empty">没有进行中的里程碑——进度图只关心「还剩什么」</div>`;
+    return;
+  }
+  const ticks = ticksOf(axis, gran);
+  const weekends = gran === "day" ? weekendsOf(axis) : [];
+
+  /* 月份带 */
+  $("ruler-band").innerHTML = monthsOf(axis).map((mo) => {
+    const l = pos(axis, mo.s), w = width(axis, mo.s, mo.e);
+    return `<div class="ruler-month" style="left:${l}%;width:${w}%">${mo.label}</div>`;
+  }).join("");
+
+  /* 刻度行（小刻度每天一根，标签按粒度）。今天尺签带日期、并顶替与其
+     重叠的刻度标签（两者同位就是双重文字）。 */
+  let ticksHtml = "";
+  for (let ts = axis.from; ts < axis.to; ts += DAY) {
+    ticksHtml += `<span class="tick" style="left:${pos(axis, ts)}%"></span>`;
+  }
+  const todayLabel = axis.todayPos !== null
+    ? `${new Date(axis.todayTs).getMonth() + 1}/${new Date(axis.todayTs).getDate()}` : null;
+  /* 「今天 M/d」尺签约 64px、刻度标签约 30px：按时间轨实际像素换算成
+     百分比，落在尺签脚印内的刻度标签整枚隐藏（两者同位即双重文字）。 */
+  const trackWpx = Math.max(1, $("ruler-ticks").clientWidth);
+  const tabHalf = (32 / trackWpx) * 100;
+  const labHalf = (15 / trackWpx) * 100;
+  for (const t of ticks) {
+    const l = pos(axis, t.ts);
+    const clashed = axis.todayPos !== null && Math.abs(l - axis.todayPos) < tabHalf + labHalf;
+    const edge = l < 1 ? " is-start" : l > 99 ? " is-end" : "";
+    ticksHtml += `<span class="tick is-label" style="left:${l}%"></span>`;
+    if (!clashed) ticksHtml += `<span class="tick-label${edge}" style="left:${l}%">${t.label}</span>`;
+  }
+  if (axis.todayPos !== null) {
+    const tabLeft = Math.min(Math.max(axis.todayPos, tabHalf), 100 - tabHalf);
+    ticksHtml += `<span class="today-tab" style="left:${tabLeft}%">今天 ${todayLabel}</span>`;
+  }
+  $("ruler-ticks").innerHTML = ticksHtml;
+
+  /* 绘图区底层：周末块、网格线、今天线。 */
+  let under = "";
+  for (const ts of weekends) {
+    under += `<div class="weekend" style="left:${pos(axis, ts)}%;width:${width(axis, ts, ts + DAY)}%"></div>`;
+  }
+  for (const t of ticks) {
+    under += `<div class="gridline${gran === "day" && t.week ? " is-week" : ""}" style="left:${pos(axis, t.ts)}%"></div>`;
+  }
+  if (axis.todayPos !== null) {
+    under += `<div class="today-line" style="left:${axis.todayPos}%"></div>`;
+  }
+
+  /* 目标组 + 里程碑行：只画未完成的里程碑；完成的折进组头「已完成 n 项」
+     小签，全部完成的目标整组不进图（列表页与详情里仍有完整历史）。 */
+  let rows = "";
+  for (const g of axis.vis) {
+    const chip = g.doneCount ? `<span class="done-chip">已完成 ${g.doneCount} 项</span>` : "";
+    rows += `<div class="group">
+      <div class="group-head"><span class="t">${esc(g.title)}</span>${chip}<span class="pct">${g.totalAll ? Math.round(g.doneAll / g.totalAll * 100) : 0}%</span></div>`;
+    let locked = false;
+    for (const m of g.milestones) {
+      const sp = spanOf(m);
+      const current = !locked && m.total > 0 && m.done < m.total;
+      if (m.done < m.total) locked = true;
+      let barHtml;
+      if (sp) {
+        /* 过去窗只留 7 天：更早的开始一律截到轴首，左缘虚线示意延伸进过去。 */
+        const clipPast = sp.s < axis.from;
+        const s0 = Math.max(sp.s, axis.from);
+        const l = pos(axis, s0), w = Math.max(0.8, width(axis, s0, sp.e));
+        const fill = m.total ? m.done / m.total * 100 : 0;
+        barHtml = `<span class="bar ${sp.kind}${clipPast ? " clip-past" : ""}" style="left:${l}%;width:${w}%"><span class="fill" style="width:${fill}%"></span></span>`;
+      } else {
+        barHtml = `<span class="bar-undated"></span>`;
+      }
+      let meta = sp ? `${m.done}/${m.total}` : "未排期";
+      if (sp && sp.e < axis.todayTs) {
+        meta += ` · <span class="late">逾期${Math.round((axis.todayTs - sp.e) / DAY)}天</span>`;
+      }
+      rows += `<div class="row" data-ms="${m.id}">
+        <span class="row-label">${current ? '<span class="dot"></span>' : ""}${esc(m.title)}</span>
+        <span class="track">${barHtml}</span>
+        <span class="row-meta">${meta}</span>
+      </div>`;
+    }
+    rows += `</div>`;
+  }
+  $("plot").innerHTML = `<div class="under">${under}</div>${rows}`;
+
+  /* 行悬停 → tooltip。 */
+  const tip = $("tip");
+  for (const row of document.querySelectorAll(".row")) {
+    const m = GOALS.flatMap((g) => g.milestones).find((x) => x.id === Number(row.dataset.ms));
+    row.addEventListener("mousemove", (e) => {
+      const sp = spanOf(m);
+      let dateLine;
+      if (!sp) dateLine = "未排期";
+      else {
+        const md = (t) => `${new Date(t).getMonth() + 1}/${new Date(t).getDate()}`;
+        dateLine = sp.kind === "range" ? `${md(sp.s)} – ${md(sp.e)}`
+          : sp.kind === "open-end" ? `${md(sp.s)} 起（未定截止）` : `截止 ${md(sp.e)}（未定开始）`;
+      }
+      let extra = "";
+      if (sp && m.done < m.total) {
+        const days = Math.round((sp.e - axis.todayTs) / DAY);
+        extra = days >= 0 ? ` · 剩余 <em>${days}</em> 天` : ` · 逾期 <em>${-days}</em> 天`;
+      }
+      tip.innerHTML = `<b>${esc(m.title)}</b><br><span class="meta">${dateLine} · 完成 <em>${m.done}/${m.total}</em>${extra}</span>`;
+      tip.style.opacity = 1;
+      const pad = 14;
+      const tw = tip.offsetWidth, th = tip.offsetHeight;
+      tip.style.left = Math.min(e.clientX + pad, innerWidth - tw - 8) + "px";
+      tip.style.top = Math.min(e.clientY + pad, innerHeight - th - 8) + "px";
+    });
+    row.addEventListener("mouseleave", () => { tip.style.opacity = 0; });
+  }
+}
+
+$("gran-day").onclick = () => { gran = "day"; $("gran-day").classList.add("is-active"); $("gran-week").classList.remove("is-active"); render(); };
+$("gran-week").onclick = () => { gran = "week"; $("gran-week").classList.add("is-active"); $("gran-day").classList.remove("is-active"); render(); };
+$("theme").onclick = () => {
+  const root = document.documentElement;
+  const dark = root.dataset.theme !== "dark";
+  root.dataset.theme = dark ? "dark" : "light";
+  $("theme").textContent = dark ? "浅色" : "深色";
+};
+render();
+</script>
+</body>
+</html>

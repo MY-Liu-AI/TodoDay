@@ -1,14 +1,15 @@
 <script setup lang="ts">
 /* 记一笔 / 编辑账目的底部弹出面板。照简约版 demo 的交互：金额大字号 +
  * 数字键盘、支出/收入切换、六色分类胶囊、备注 + 日期；
- * Enter 保存 · Shift+Enter 保存并再记一笔 · 数字键/退格直接输入 · Esc 关闭。 */
+ * Enter 保存 · Shift+Enter 保存并再记一笔 · 数字键/退格直接输入 · Esc 关闭。
+ * 分类胶囊来自服务端的分类清单（用户在分类预算视图维护，Kimi 账单解析
+ * 同一份清单），不再用前端写死的六分类。 */
 import { onMounted, onUnmounted, ref } from "vue";
 import { C } from "../copy";
-import { addTx, saveTx } from "../store";
+import { addTx, loadCategories, saveTx, st } from "../store";
 import type { WireTx } from "../api";
 import { dateValue } from "../lib/model.js";
 import { TODAY } from "../lib/todo.js";
-import { LEDGER_CATS } from "../lib/ledger.js";
 import Icon from "./Icon.vue";
 
 const props = defineProps<{ tx: WireTx | null }>();
@@ -29,6 +30,8 @@ onMounted(() => {
   previous = document.activeElement;
   refEl.value?.showModal();
   window.addEventListener("keydown", onKey);
+  // 清单长期有效，只为未加载的首开拉一次（幂等）。
+  loadCategories();
 });
 onUnmounted(() => {
   window.removeEventListener("keydown", onKey);
@@ -155,8 +158,8 @@ function onCancel() {
 
       <div v-if="type === 'exp'" class="ledger-cats" role="group" :aria-label="C.ledgerCategory">
         <button
-          v-for="c in LEDGER_CATS"
-          :key="c.name"
+          v-for="c in st.categories"
+          :key="c.id"
           type="button"
           class="ledger-chip"
           :data-color="c.color"

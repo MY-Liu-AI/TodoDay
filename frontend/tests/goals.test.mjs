@@ -319,6 +319,11 @@ test("goals use strategy questions instead of note and due date", () => {
   assert.match(css, /\.goal-strategy-item p \{/);
   assert.match(css, /\.goal-strategy-item p\.is-clamped \{[\s\S]*?-webkit-line-clamp: 3/);
   assert.match(css, /\.goal-strategy-q \{[\s\S]*?border-left: 2px solid var\(--accent\)/);
+  // 自激渲染回归：refreshStrategy 在 onUpdated 里运行且其结果被模板读取，
+  // 无条件换新 Map 会「渲染→updated→赋值→再渲染」死循环（Maximum recursive
+  // updates，线上表现为点修改弹窗不出现、返回列表才冒出来）。必须无变化
+  // 不赋值（内容相等直接 return）。
+  assert.match(view, /function refreshStrategy\(\) \{[\s\S]*?if \(prev\.size === next\.size && \[...next\]\.every\(\(\[k, v\]\) => prev\.get\(k\) === v\)\) return;/);
 });
 
 /* 详情页头部操作（2026-10-27 改版）：主操作（达成/重新打开）是唯一主色按钮，
