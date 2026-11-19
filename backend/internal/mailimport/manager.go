@@ -94,6 +94,12 @@ const (
 	// 失败连接」有反滥用限流（静默吊起/断连），无限退避重试会把工作区 IP
 	// 喂进黑名单；自动停止 + 设置页留痕让用户核对后手动再启动。
 	maxConsecFailures = 5
+	// healthyServe 是「健康连接」的判定线：一次 serve 存活满这个时长后
+	// 断开，失败计数与退避都归零，按首次失败重计。QQ 每约 2 小时掐一次
+	// IDLE 长连接是常规行为（2026-11-18 实发：重连每次都成功，但计数
+	// 不清零，四次常规断连 + 一次触发被误熔断、导入半夜停摆）；真重试
+	// 风暴单次只活约 30 秒（建连看门狗封顶），远在阈值之下不受影响。
+	healthyServe = 15 * time.Minute
 )
 
 func NewManager(st *store.Store, box *secretbox.Box) *Manager {
@@ -229,9 +235,16 @@ func (m *Manager) run(ctx context.Context, wid int64, r *run) {
 		if ctx.Err() != nil {
 			return
 		}
+		started := time.Now()
 		err := m.serve(ctx, wid)
 		if ctx.Err() != nil {
 			return
+		}
+		// 健康运行过的连接断开不算「连续」失败（见 healthyServe 注释），
+		// 先归零再进分支计数。
+		if time.Since(started) >= healthyServe {
+			consec = 0
+			backoff = m.retryInitial
 		}
 		switch {
 		case err == nil:
@@ -261,7 +274,7 @@ func (m *Manager) run(ctx context.Context, wid int64, r *run) {
 				if derr := m.st.SetMailEnabled(ctx, wid, false); derr != nil {
 					log.Printf("mailimport: 记录停止状态失败：%v", derr)
 				}
-				log.Printf("mailimport: 工作区 %d 连续 %d 次连接失败，已自动停止导入（防重试风暴）", wid, consec)
+				log.Printf("mailimport: 工作区 %d 连续 %d 次连接失败，已自动停止导入（防重试风暴）：%v", wid, consec, err)
 				return
 			}
 			log.Printf("mailimport: 工作区 %d 连接中断，%v 后重连：%v", wid, backoff, err)

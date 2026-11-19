@@ -208,6 +208,19 @@ func (t *Transport) Open(ctx context.Context, mailbox, authCode string, loc *tim
 			},
 		},
 	})
+	// 必须等问候语落袋再发命令：imapclient.New 不等 greeting 就返回，
+	// 而 QQ 邮箱会静默丢弃先于问候语到达的命令（连接随后被吊死到超时，
+	// 2026-11-17 矩阵探测实锤：greeting 后写 LOGIN 秒回，先写 LOGIN
+	// 再读 greeting 则 12s 零响应）。其他服务端（ Dovecot/memserver ）
+	// 不挑时序，但等 greeting 是 RFC 3501 的保守做法，对所有服务端安全。
+	if err := c.WaitGreeting(); err != nil {
+		closeOpenWatchdog()
+		_ = tc.Close()
+		if timedOut.Load() {
+			return nil, fmt.Errorf("连接邮箱服务器超时（%d 秒无响应）：网络异常或邮箱服务商临时限流", int(openHardTimeout/time.Second))
+		}
+		return nil, fmt.Errorf("读取邮箱问候语失败：%w", err)
+	}
 	if err := c.Login(mailbox, authCode).Wait(); err != nil {
 		closeOpenWatchdog()
 		_ = tc.Close()

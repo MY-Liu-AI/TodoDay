@@ -115,8 +115,15 @@ func (k *Kimi) ParseBill(ctx context.Context, from, subject, body string, now ti
 			{Role: "system", Content: billSystemPrompt(categories)},
 			{Role: "user", Content: userText},
 		},
-		Tools:      []map[string]any{billToolSchema},
-		ToolChoice: "auto",
+		Tools: []map[string]any{billToolSchema},
+		// 强制调用某个工具："auto" 下推理模型有权用自然语言回答，它常把
+		// record_bill(...) 整段当文本吐出来（2026-11-17 线上实发，邮件
+		// 3078 即此形态，反复失败重试）；非账单也必须走工具（is_bill=false
+		// 的跳过路径）。只提供这一个工具，"required" 恒等于调用它。
+		// 注意不能用 {"type":"function",...} 的指定形态——Moonshot 的
+		// 思考模型对 'specified' 一律 400（tool_choice incompatible with
+		// thinking enabled），"required" 则兼容（2026-11-17 实测）。
+		ToolChoice: "required",
 	}
 	out, err := ai.DoChat(ctx, k.HTTP, k.base, k.APIKey, &payload)
 	if err != nil {
