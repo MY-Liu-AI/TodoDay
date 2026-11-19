@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>每日复盘 · 设计方案 Demo</title>
+<style>
+  /* 与 frontend/src/styles/planner.css 同一套设计变量（浅色默认） */
+  :root {
+    --bg: #f6f8f8; --panel: #fff; --raised: #f3f5f4;
+    --ink: #202622; --muted: #656d68; --faint: #737b76;
+    --line: #e3e7e4; --line-soft: #edf0ee;
+    --accent: oklch(0.49 0.085 185); --accent-ink: #fff; --accent-soft: #e4f2ef;
+    --neg: #a74636; --warn: #876322;
+    --h0: #edf0ed; --h1: #cce9df; --h2: #9dcdbc; --h3: #5fa995; --h4: var(--accent);
+    --r-sm: 8px; --r-md: 12px; --r-lg: 16px;
+    --shadow-float: 0 8px 24px rgb(20 30 24 / 0.12);
+    --sans: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+    --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+    --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: var(--sans); background: var(--bg); color: var(--ink); display: flex; min-height: 100vh; font-size: 14px; line-height: 1.6; }
+  button { font-family: inherit; cursor: pointer; }
+  input, textarea, select { font-family: inherit; font-size: 13.5px; color: var(--ink); }
+  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+  /* ── 侧栏 ── */
+  .side { width: 216px; flex: none; background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; padding: 20px 12px; position: sticky; top: 0; height: 100vh; }
+  .brand { font-size: 17px; font-weight: 700; letter-spacing: .02em; padding: 6px 12px 22px; }
+  .brand em { color: var(--accent); font-style: normal; }
+  .nav { display: flex; flex-direction: column; gap: 2px; }
+  .nav button { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 0; background: none; border-radius: var(--r-sm); color: var(--muted); font-size: 14px; text-align: left; }
+  .nav button:hover { background: var(--raised); color: var(--ink); }
+  .nav button.is-active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .side-foot { margin-top: auto; font-size: 11px; color: var(--faint); padding: 0 12px; line-height: 1.8; }
+
+  /* ── 主列 ── */
+  main { flex: 1; min-width: 0; padding: 28px clamp(20px, 5vw, 64px) 120px; max-width: 1040px; }
+  .topbar { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 18px; }
+  .overline { font-size: 11px; letter-spacing: .18em; color: var(--faint); }
+  h1 { font-size: 24px; margin-top: 2px; }
+  .view-switch { display: inline-flex; background: var(--raised); border: 1px solid var(--line); border-radius: 10px; padding: 3px; gap: 2px; }
+  .view-switch button { border: 0; background: none; padding: 6px 14px; border-radius: 7px; color: var(--muted); font-size: 13px; }
+  .view-switch button.is-active { background: var(--panel); color: var(--ink); font-weight: 600; box-shadow: 0 1px 2px rgb(0 0 0 / .06); }
+
+  .datebar { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+  .datebar .day-title { font-size: 16px; font-weight: 600; min-width: 150px; text-align: center; }
+  .icon-btn { width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--panel); color: var(--muted); transition: all .16s var(--ease); }
+  .icon-btn:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+  .icon-btn:disabled { opacity: .4; cursor: not-allowed; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-size: 12px; border: 1px solid var(--line); color: var(--muted); background: var(--panel); }
+  .chip.accent { border-color: transparent; background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .chip.warn { color: var(--warn); border-color: #e7dcc3; background: #fbf6ea; }
+  .chip.neg { color: var(--neg); border-color: #ecd6d1; background: #fbf1ef; }
+
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-md); padding: 18px 20px; margin-bottom: 14px; }
+  .card h2 { font-size: 15px; display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .card h2 .hint { font-size: 12px; color: var(--faint); font-weight: 400; }
+  .card h2 .right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  .sub { font-size: 12.5px; color: var(--muted); }
+
+  /* 事实层 */
+  .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+  .fact { background: var(--raised); border-radius: var(--r-sm); padding: 10px 12px; position: relative; cursor: default; }
+  .fact .k { font-size: 11px; color: var(--faint); letter-spacing: .04em; }
+  .fact .v { font-size: 20px; font-weight: 600; margin-top: 2px; }
+  .fact .v small { font-size: 12px; color: var(--muted); font-weight: 400; margin-left: 3px; }
+  .fact .src { position: absolute; right: 10px; top: 10px; font-size: 10.5px; color: var(--faint); opacity: 0; transition: opacity .16s; }
+  .fact:hover .src { opacity: 1; }
+  .promise { display: flex; align-items: center; gap: 12px; margin-top: 12px; padding: 10px 12px; border: 1px dashed var(--line); border-radius: var(--r-sm); font-size: 13.5px; }
+  .promise b { font-weight: 600; }
+  .ok { color: var(--accent); font-weight: 600; }
+  .bad { color: var(--neg); font-weight: 600; }
+
+  /* 表单 */
+  .field { display: grid; grid-template-columns: 130px 1fr; gap: 12px; align-items: start; padding: 9px 0; border-top: 1px solid var(--line-soft); }
+  .field:first-of-type { border-top: 0; }
+  .field label { font-size: 13px; color: var(--muted); padding-top: 7px; }
+  .field input[type=text], .field textarea { width: 100%; border: 1px solid var(--line); border-radius: var(--r-sm); padding: 7px 10px; background: var(--panel); outline: 0; resize: vertical; }
+  .field input:focus, .field textarea:focus { border-color: var(--accent); }
+  .pills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .pill { border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: 3px 11px; font-size: 12.5px; color: var(--muted); }
+  .pill.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  .pill:hover:not(.on) { border-color: var(--accent); color: var(--accent); }
+  .link { background: none; border: 0; color: var(--accent); font-size: 12.5px; padding: 0; text-decoration: underline dotted; }
+  .scale { display: flex; gap: 6px; align-items: center; }
+  .scale button { width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--line); background: var(--panel); color: var(--muted); font-size: 12.5px; }
+  .scale button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .scale .lbl { font-size: 12px; color: var(--faint); margin-left: 6px; }
+  .checkrow { display: flex; align-items: center; gap: 10px; margin-top: 8px; font-size: 13px; color: var(--muted); }
+
+  /* 问题检查 */
+  .issue-check { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line-soft); }
+  .issue-check:first-child { border-top: 0; }
+  .issue-check .t { flex: 1; min-width: 0; }
+  .issue-check .t .d { font-size: 11.5px; color: var(--faint); }
+  .issue-check.done { opacity: .72; }
+  .issue-check.done .t { font-size: 13px; }
+  .two { display: inline-flex; border: 1px solid var(--line); border-radius: var(--r-sm); overflow: hidden; }
+  .two button { border: 0; background: var(--panel); padding: 5px 12px; font-size: 12.5px; color: var(--muted); }
+  .two button + button { border-left: 1px solid var(--line); }
+  .two button.on-yes { background: var(--ink); color: #fff; }
+  .two button.on-no { background: var(--accent); color: #fff; }
+  .dots { display: inline-flex; gap: 3px; align-items: center; }
+  .dots i { width: 9px; height: 9px; border-radius: 2px; background: var(--h0); display: inline-block; }
+  .dots i.hit { background: var(--h4); }
+  .dots i.na { background: transparent; border: 1px dashed var(--line); }
+
+  .primary { background: var(--accent); color: var(--accent-ink); border: 0; border-radius: var(--r-sm); padding: 9px 18px; font-size: 14px; font-weight: 600; }
+  .primary:disabled { opacity: .45; cursor: not-allowed; }
+  .ghost { background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 7px 12px; font-size: 13px; }
+  .ghost:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .ghost:disabled { opacity: .5; cursor: not-allowed; }
+  .ghost.small, .primary.small { padding: 4px 10px; font-size: 12.5px; }
+  .mirror { display: flex; gap: 14px; align-items: flex-start; }
+  .mirror .box { flex: 1; background: var(--raised); border-radius: var(--r-sm); padding: 12px 14px; font-size: 13.5px; min-height: 48px; }
+  .mirror .box .st { font-size: 11px; color: var(--faint); letter-spacing: .06em; margin-bottom: 4px; }
+  .mirror .box.muted { color: var(--muted); }
+
+  /* 问题库 */
+  .sec-title { font-size: 11px; letter-spacing: .14em; color: var(--faint); margin: 18px 0 8px; display: flex; align-items: center; gap: 8px; }
+  .sec-title::after { content: ""; flex: 1; height: 1px; background: var(--line-soft); }
+  .issue { display: grid; grid-template-columns: 1fr auto; gap: 8px 16px; padding: 14px 18px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-md); margin-bottom: 10px; }
+  .issue .head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .issue .head b { font-size: 14.5px; }
+  .issue .cm { font-size: 13px; color: var(--muted); }
+  .issue .cm em { font-style: normal; color: var(--ink); }
+  .issue .metrics { display: flex; gap: 18px; font-size: 12px; color: var(--faint); flex-wrap: wrap; margin-top: 4px; }
+  .issue .metrics b { color: var(--ink); font-weight: 600; }
+  .issue .acts { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
+  .issue .acts .row { display: flex; gap: 6px; }
+  .issue .why { font-size: 11px; color: var(--faint); text-align: right; }
+  .grid30 { display: grid; grid-template-columns: repeat(30, 10px); gap: 3px; margin-top: 6px; }
+  .grid30 i { width: 10px; height: 10px; border-radius: 2px; background: var(--h0); }
+  .grid30 i.hit { background: var(--h4); }
+  .grid30 i.na { background: transparent; border: 1px dashed var(--line); }
+  .grid30 i.today { outline: 1px solid var(--accent); outline-offset: 1px; }
+  .legend { display: flex; gap: 14px; font-size: 11.5px; color: var(--faint); margin-top: 6px; align-items: center; }
+  .legend i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; vertical-align: -1px; margin-right: 4px; }
+  .tag { font-size: 11px; padding: 1px 7px; border-radius: 4px; background: var(--raised); color: var(--muted); }
+
+  /* 股市 */
+  .thesis { border: 1px solid var(--line); border-radius: var(--r-md); padding: 14px 18px; background: var(--panel); margin-bottom: 10px; }
+  .thesis .top { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .thesis .top b { font-size: 14.5px; }
+  .thesis .reason { margin: 8px 0 4px; font-size: 13.5px; }
+  .thesis .meta { font-size: 12px; color: var(--faint); display: flex; gap: 14px; flex-wrap: wrap; }
+  .thesis.locked .reason { padding: 8px 10px; background: var(--raised); border-radius: var(--r-sm); }
+  .verify { margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--line); display: grid; gap: 10px; }
+  .q { display: grid; grid-template-columns: 210px 1fr; gap: 10px; align-items: center; font-size: 13px; }
+  .q .ql { color: var(--muted); }
+  .matrix { display: grid; grid-template-columns: 110px 1fr 1fr; gap: 6px; margin-top: 4px; }
+  .matrix .h { font-size: 11.5px; color: var(--faint); display: grid; place-items: center; text-align: center; padding: 4px; }
+  .matrix .cell { background: var(--raised); border-radius: var(--r-sm); padding: 12px; min-height: 86px; cursor: pointer; border: 1px solid transparent; transition: border-color .16s; }
+  .matrix .cell:hover { border-color: var(--accent); }
+  .matrix .cell .n { font-size: 24px; font-weight: 600; }
+  .matrix .cell .l { font-size: 12.5px; }
+  .matrix .cell .s { font-size: 11.5px; color: var(--faint); }
+  .matrix .cell.danger { border-color: var(--warn); border-style: dashed; }
+  .twocol { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 820px) { .twocol { grid-template-columns: 1fr; } .field, .q { grid-template-columns: 1fr; } }
+  .insuff { padding: 22px; text-align: center; color: var(--muted); font-size: 13px; background: var(--raised); border-radius: var(--r-sm); }
+  .insuff b { display: block; font-size: 15px; color: var(--ink); margin-bottom: 2px; }
+  table.t { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.t th { text-align: left; font-weight: 500; color: var(--faint); font-size: 11.5px; letter-spacing: .06em; padding: 6px 0; border-bottom: 1px solid var(--line); }
+  table.t td { padding: 7px 0; border-bottom: 1px solid var(--line-soft); }
+  table.t td:last-child, table.t th:last-child { text-align: right; }
+  .bar { height: 6px; background: var(--h0); border-radius: 3px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; }
+  .form-grid .full { grid-column: 1 / -1; }
+  .form-grid label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .form-grid input, .form-grid textarea, .form-grid select { width: 100%; border: 1px solid var(--line); border-radius: var(--r-sm); padding: 7px 10px; background: var(--panel); outline: 0; }
+  .form-grid input:focus, .form-grid textarea:focus { border-color: var(--accent); }
+  .notice { font-size: 12.5px; color: var(--warn); background: #fbf6ea; border: 1px solid #e7dcc3; border-radius: var(--r-sm); padding: 8px 12px; }
+
+  /* 周回看 */
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-md); padding: 14px 16px; }
+  .tile .k { font-size: 11.5px; color: var(--faint); }
+  .tile .v { font-size: 24px; font-weight: 600; margin-top: 2px; }
+  .tile .v small { font-size: 12px; color: var(--muted); font-weight: 400; margin-left: 3px; }
+  .tile .d { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .spark { width: 100%; height: 120px; overflow: visible; }
+  .spark .grid { stroke: var(--line-soft); stroke-width: 1; }
+  .spark .area { fill: var(--accent-soft); }
+  .spark .ln { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+  .spark .pt { fill: var(--panel); stroke: var(--accent); stroke-width: 2; r: 4; }
+  .spark .pt:hover { r: 6; }
+  .spark .lbl { font-size: 10.5px; fill: var(--faint); font-family: var(--mono); }
+  .xlbl { display: grid; grid-template-columns: repeat(7, 1fr); font-size: 11px; color: var(--faint); font-family: var(--mono); text-align: center; margin-top: 4px; }
+  .seg { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+  .switch { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); cursor: pointer; }
+
+  /* toast */
+  .toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%) translateY(20px); opacity: 0; pointer-events: none; background: var(--ink); color: #fff; padding: 10px 14px; border-radius: 10px; font-size: 13px; display: flex; gap: 14px; align-items: center; box-shadow: var(--shadow-float); transition: all .22s var(--ease); z-index: 20; }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); pointer-events: auto; }
+  .toast button { background: none; border: 0; color: #9ddcc7; font-weight: 600; }
+  .hidden { display: none !important; }
+  .empty { color: var(--faint); font-size: 13px; padding: 10px 0; }
+</style>
+</head>
+<body>
+<aside class="side">
+  <div class="brand">专注<em>.</em> 任务</div>
+  <nav class="nav">
+    <button>我的计划</button>
+    <button>目标</button>
+    <button>习惯</button>
+    <button>番茄专注</button>
+    <button>统计</button>
+    <button class="is-active">复盘</button>
+    <button>记账本</button>
+    <button>设置</button>
+  </nav>
+  <div class="side-foot">设计演示 · 内嵌示例数据<br>所有操作只改页面状态</div>
+</aside>
+
+<main>
+  <div class="topbar">
+    <div><div class="overline">REVIEW</div><h1>复盘</h1></div>
+    <div class="view-switch" id="vs">
+      <button data-v="today" class="is-active">今日复盘</button>
+      <button data-v="issues">问题库</button>
+      <button data-v="market">股市观点</button>
+      <button data-v="week">周回看</button>
+    </div>
+  </div>
+
+  <!-- ════════ 今日复盘 ════════ -->
+  <section id="v-today">
+    <div class="datebar">
+      <button class="icon-btn" onclick="shiftDay(-1)">‹</button>
+      <div class="day-title" id="dayTitle"></div>
+      <button class="icon-btn" id="nextDay" onclick="shiftDay(1)">›</button>
+      <span class="chip accent" id="streakChip"></span>
+      <span class="chip" id="savedChip"></span>
+    </div>
+
+    <div class="card">
+      <h2>今天的事实 <span class="hint">来自计划 / 专注 / 习惯 / 账本，只读</span></h2>
+      <div class="facts" id="facts"></div>
+      <div class="promise" id="promise"></div>
+    </div>
+
+    <div class="card">
+      <h2>工作</h2>
+      <div class="field"><label>做得好的一件</label><input type="text" id="f-win" placeholder="具体到一件事，不写形容词"></div>
+      <div class="field"><label>没做好的一件</label>
+        <div>
+          <input type="text" id="f-miss" placeholder="同样具体到一件事">
+          <div class="pills" id="causes"></div>
+          <div class="checkrow"><button class="link" onclick="registerFromMiss()">登记为长期问题 →</button><span id="regHint" class="sub"></span></div>
+        </div>
+      </div>
+      <div class="field"><label>明天最重要的一件事</label>
+        <div>
+          <input type="text" id="f-top1" placeholder="只写一件">
+          <label class="checkrow"><input type="checkbox" id="f-mktask" checked> 保存时建成明天的任务（重复保存不会建第二条）</label>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>生活</h2>
+      <div class="field"><label>精力</label><div class="scale" id="energy"></div></div>
+      <div class="field"><label>情绪</label><div class="scale" id="mood"></div></div>
+      <div class="field"><label>一句话 <span class="sub">(可空)</span></label><input type="text" id="f-life" placeholder="值得记的一件小事，或要改的一个习惯"></div>
+    </div>
+
+    <div class="card">
+      <h2>股市 <span class="hint">可整段跳过</span>
+        <span class="right"><span class="chip warn" id="dueChip"></span><button class="ghost small" onclick="goView('market')">去验证 / 记一张观点卡</button></span>
+      </h2>
+      <div class="sub" id="todayTheses"></div>
+    </div>
+
+    <div class="card">
+      <h2>问题检查 <span class="hint" id="issueCount"></span>
+        <span class="right"><button class="ghost small" onclick="goView('issues')">管理问题库</button></span>
+      </h2>
+      <div id="checks"></div>
+    </div>
+
+    <div class="card">
+      <div class="mirror">
+        <div class="box" id="mirrorBox"></div>
+        <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end">
+          <button class="primary" id="saveBtn" onclick="saveReview()">保存复盘</button>
+          <label class="switch"><input type="checkbox" id="aiOff" onchange="renderMirror()"> 模拟 AI 未配置</label>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════ 问题库 ════════ -->
+  <section id="v-issues" class="hidden">
+    <div class="card" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+      <input type="text" id="newIssue" placeholder="登记一条问题，例如「会前不看材料」" style="flex:1;min-width:220px;border:1px solid var(--line);border-radius:8px;padding:8px 10px;outline:0">
+      <select id="newDomain" style="border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:#fff"><option value="work">工作</option><option value="life">生活</option><option value="market">股市</option></select>
+      <button class="primary" onclick="addIssue()">登记</button>
+      <span class="sub" id="capHint"></span>
+    </div>
+    <div class="legend"><span><i style="background:var(--h4)"></i>出现</span><span><i style="background:var(--h0)"></i>没出现</span><span><i style="border:1px dashed var(--line)"></i>当天未复盘</span><span>· 近 30 天，右端为今天</span></div>
+    <div id="issueList"></div>
+  </section>
+
+  <!-- ════════ 股市观点 ════════ -->
+  <section id="v-market" class="hidden">
+    <div class="notice" style="margin-bottom:14px">本模块只记录决策过程并事后验证，不接行情、不算盈亏、不提供投资建议。价格字段手填且可空。</div>
+    <div class="sec-title">待验证</div>
+    <div id="pending"></div>
+
+    <div class="twocol">
+      <div class="card">
+        <h2>过程 × 结果 <span class="hint">近 90 天已验证 <span class="num" id="vcount"></span> 张</span></h2>
+        <div class="matrix" id="matrix"></div>
+        <div class="sub" style="margin-top:8px">虚线框那格是「运气」：结果对了但理由不成立，最容易被当成经验复制。</div>
+      </div>
+      <div class="card">
+        <h2>信心校准 <span class="hint">声明信心 vs 实际符合率</span></h2>
+        <div id="calib"></div>
+        <h2 style="margin-top:18px">决策时情绪 × 结果</h2>
+        <table class="t" id="emoTable"></table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>记一张观点卡 <span class="hint">保存后理由 / 信心 / 方向 / 时间窗锁定，只能追加补注</span></h2>
+      <div class="form-grid">
+        <div><label>标的</label><input id="t-symbol" placeholder="代码或名称"></div>
+        <div><label>方向</label><select id="t-stance"><option value="long">看多</option><option value="short">看空</option><option value="watch">观望</option></select></div>
+        <div class="full"><label>理由（≤140 字，写当时真正的依据）</label><textarea id="t-thesis" rows="2"></textarea></div>
+        <div><label>信心 <span class="num" id="confV">70</span></label><input type="range" id="t-conf" min="50" max="100" value="70" oninput="confV.textContent=this.value"></div>
+        <div><label>时间窗</label><select id="t-h"><option value="5">5 个交易日</option><option value="10">10 个交易日</option><option value="20" selected>20 个交易日</option><option value="60">60 个交易日</option></select></div>
+        <div><label>是否实操</label><select id="t-act"><option value="none">没动</option><option value="buy">买入</option><option value="add">加仓</option><option value="reduce">减仓</option><option value="sell">卖出</option></select></div>
+        <div><label>当时情绪</label><select id="t-emo"><option value="calm">冷静</option><option value="fomo">FOMO</option><option value="fear">恐慌</option><option value="revenge">报复</option><option value="boredom">无聊</option></select></div>
+        <div><label>参考价（可空）</label><input id="t-price" placeholder="手填"></div>
+        <div class="full" style="display:flex;justify-content:flex-end"><button class="primary" onclick="addThesis()">保存观点卡</button></div>
+      </div>
+    </div>
+
+    <div class="sec-title">已验证</div>
+    <div id="verified"></div>
+  </section>
+
+  <!-- ════════ 周回看 ════════ -->
+  <section id="v-week" class="hidden">
+    <div class="datebar"><button class="icon-btn">‹</button><div class="day-title">11月3日 – 11月9日</div><button class="icon-btn" disabled>›</button><span class="chip">只读 · 每周一生成</span></div>
+    <div class="tiles" id="wtiles"></div>
+    <div class="twocol" style="margin-top:14px">
+      <div class="card"><h2>精力 <span class="hint">1–5</span></h2><svg class="spark" id="sp-energy"></svg><div class="xlbl"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div></div>
+      <div class="card"><h2>情绪 <span class="hint">1–5</span></h2><svg class="spark" id="sp-mood"></svg><div class="xlbl"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div></div>
+    </div>
+    <div class="twocol">
+      <div class="card"><h2>问题出现天数 <span class="hint">本周检查 6 天</span></h2><table class="t" id="wissues"></table></div>
+      <div class="card"><h2>工作归因 <span class="hint">本周「没做好」的原因</span></h2><table class="t" id="wcauses"></table></div>
+    </div>
+    <div class="card">
+      <h2>本周最该改的一个问题 <span class="hint">AI 周评，必须引用上面的数字</span><span class="right"><label class="switch"><input type="checkbox" id="aiOffW" onchange="renderWeek()"> 模拟 AI 未配置</label></span></h2>
+      <div class="mirror"><div class="box" id="weekAI"></div></div>
+    </div>
+  </section>
+</main>
+
+<div class="toast" id="toast"><span id="toastMsg"></span><button id="toastUndo">撤销</button></div>
+
+<script>
+/* ───────── 工具 ───────── */
+const TODAY = '2026-11-11';
+const D = s => new Date(s + 'T00:00:00');
+const fmt = d => d.toISOString().slice(0, 10);
+const addDays = (s, n) => { const d = D(s); d.setDate(d.getDate() + n); return fmt(d); };
+const WK = ['日','一','二','三','四','五','六'];
+const cn = s => { const d = D(s); return `${d.getMonth()+1}月${d.getDate()}日 周${WK[d.getDay()]}`; };
+const last30 = Array.from({length: 30}, (_, i) => addDays(TODAY, i - 29));
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+/* ───────── 示例数据 ───────── */
+// 复盘出勤：近 30 天哪些天复盘了（'-' 表示那天没复盘，检查点阵据此标「未复盘」）
+const reviewedDays = new Set(last30.filter((d, i) => ![3, 9, 17, 24].includes(i) && d !== TODAY));
+// 检查序列：按 last30 顺序，1 出现 / 0 没出现 / '-' 未检查
+const seq = s => s.split('').map(c => c === '-' ? null : +c);
+const issues = [
+  { id: 1, title: '晚上刷手机到 1 点', domain: 'life', cm: '23:30 手机放客厅充电', status: 'active', opened: '2026-10-14', relapse: 1,
+    checks: seq('-11-01101-0010100-100100-1001-') },
+  { id: 2, title: '追高买入', domain: 'market', cm: '开盘前写好观点卡再下单；盘中涨超 5% 不追', status: 'active', opened: '2026-10-20', relapse: 0,
+    checks: seq('-------00-0001000-000010-0000-') },
+  { id: 3, title: '会前不看材料', domain: 'work', cm: '会前 10 分钟番茄只读材料', status: 'active', opened: '2026-10-28', relapse: 0,
+    checks: seq('---------------10-010000-0000-') },
+  { id: 4, title: '午饭后不散步直接坐下', domain: 'life', cm: '饭后绕楼一圈', status: 'observing', opened: '2026-10-01', resolved: '2026-11-05', relapse: 0,
+    checks: seq('000-00000-0000000-000000-0000-') },
+  { id: 5, title: '把任务拖到 deadline 当天', domain: 'work', cm: '收到任务当天就切出第一步', status: 'resolved', opened: '2026-09-12', resolved: '2026-10-05', relapse: 2,
+    checks: seq('000-00000-0000000-000000-0000-') },
+];
+// 30 位字符串：索引 0 = 10-13，索引 29 = 今天；'-' 为当天未复盘（3/9/17/24）或登记前。
+issues.forEach(i => { i.checks = i.checks.map((v, k) => (last30[k] === TODAY ? null : v)); });
+const DOMAIN = { work: '工作', life: '生活', market: '股市' };
+const CAUSES = [['overplan','计划过满'],['interrupted','被打断'],['procrastinate','拖延/启动难'],['gap','能力/信息缺口'],['dependency','依赖他人'],['other','其他']];
+const STANCE = { long: '看多', short: '看空', watch: '观望' };
+const ACT = { none: '没动', buy: '买入', add: '加仓', reduce: '减仓', sell: '卖出' };
+const EMO = { calm: '冷静', fomo: 'FOMO', fear: '恐慌', revenge: '报复', boredom: '无聊' };
+
+let theses = [
+  { id: 1, day: '2026-10-13', symbol: '宁德时代', stance: 'long', thesis: '板块连续放量，龙头回调到位，市场情绪在起来', conf: 75, h: 20, act: 'buy', emo: 'fomo', verdict: 'verified', p: 0, o: 1, note: '涨是因为政策消息，和我的理由无关' },
+  { id: 2, day: '2026-10-15', symbol: '沪深300ETF', stance: 'watch', thesis: '估值分位低于 30%，但量能没起来，先观望等放量', conf: 60, h: 20, act: 'none', emo: 'calm', verdict: 'verified', p: 1, o: 1 },
+  { id: 3, day: '2026-10-16', symbol: '某券商', stance: 'long', thesis: '成交额破两万亿，券商板块肯定补涨', conf: 85, h: 10, act: 'add', emo: 'fomo', verdict: 'verified', p: 0, o: 0, note: '「肯定」两个字就该警惕', issueId: 2 },
+  { id: 4, day: '2026-10-20', symbol: '中芯国际', stance: 'long', thesis: '三季报产能利用率回升，国产替代订单可见度高', conf: 70, h: 20, act: 'buy', emo: 'calm', verdict: 'verified', p: 1, o: 0, note: '逻辑没问题，外部制裁消息打断了，不改逻辑' },
+  { id: 5, day: '2026-10-22', symbol: '黄金ETF', stance: 'long', thesis: '实际利率下行 + 央行购金持续，趋势未变', conf: 80, h: 60, act: 'add', emo: 'calm', verdict: 'verified', p: 1, o: 1 },
+  { id: 6, day: '2026-10-24', symbol: '某地产', stance: 'short', thesis: '销售数据继续走弱，反弹是情绪', conf: 65, h: 10, act: 'reduce', emo: 'fear', verdict: 'verified', p: 0, o: 1, note: '跌了，但跌的原因是流动性，不是我说的销售' },
+  { id: 7, day: '2026-10-27', symbol: '创业板ETF', stance: 'long', thesis: '前两笔亏了，这笔必须赚回来，指数跌多了该反弹', conf: 90, h: 5, act: 'buy', emo: 'revenge', verdict: 'verified', p: 0, o: 0, note: '理由里没有一条是关于标的的' , issueId: 2 },
+  { id: 8, day: '2026-10-29', symbol: '长江电力', stance: 'long', thesis: '股息率 3.5% 以上，来水偏丰，防御仓位', conf: 70, h: 60, act: 'none', emo: 'calm', verdict: 'verified', p: 1, o: 1 },
+  { id: 9, day: '2026-11-03', symbol: '某白酒', stance: 'long', thesis: '没什么好买的，白酒跌了一年了', conf: 60, h: 5, act: 'buy', emo: 'boredom', verdict: 'verified', p: 1, o: 0, note: '理由其实是无聊，勉强算过程成立有点自欺' },
+  { id: 10, day: '2026-11-04', symbol: '恒生科技', stance: 'long', thesis: '港股科技连涨三天，北水大幅净买入，再不上车就晚了', conf: 70, h: 5, act: 'buy', emo: 'fomo', verdict: 'pending' },
+  { id: 11, day: '2026-11-06', symbol: '光伏ETF', stance: 'watch', thesis: '产能出清传闻多，但没看到价格数据企稳，等多晶硅价格连续两周不跌', conf: 55, h: 20, act: 'none', emo: 'calm', verdict: 'pending' },
+];
+theses.forEach(t => t.due = addDays(t.day, t.h * 7 / 5 | 0));
+
+/* 复盘状态（仅页面内） */
+let curDay = TODAY;
+const reviews = {
+  '2026-11-10': { win: '周报提前半天交了', miss: '方案第二章只写了一半', cause: 'interrupted', top1: '写完方案第二章', top1Done: true, energy: 3, mood: 3, life: '' },
+};
+let streak = 12;
+const state = { win: '', miss: '', cause: '', top1: '', energy: 0, mood: 0, life: '', checks: {}, saved: false };
+let verifyDraft = {};
+
+/* ───────── 视图切换 ───────── */
+function goView(v) {
+  document.querySelectorAll('#vs button').forEach(b => b.classList.toggle('is-active', b.dataset.v === v));
+  ['today','issues','market','week'].forEach(k => $('v-' + k).classList.toggle('hidden', k !== v));
+  ({ today: renderToday, issues: renderIssues, market: renderMarket, week: renderWeek })[v]();
+}
+document.querySelectorAll('#vs button').forEach(b => b.onclick = () => goView(b.dataset.v));
+
+/* ───────── 今日复盘 ───────── */
+function shiftDay(n) { const d = addDays(curDay, n); if (d > TODAY) return; curDay = d; state.saved = !!reviews[d]; renderToday(); }
+function renderToday() {
+  $('dayTitle').textContent = cn(curDay) + (curDay === TODAY ? '' : ' · 补记');
+  $('nextDay').disabled = curDay >= TODAY;
+  $('streakChip').textContent = `连续复盘 ${streak} 天`;
+  $('savedChip').textContent = state.saved ? '已保存，可修改' : (curDay === TODAY ? '今天还没保存' : '补记不计连续天数');
+  // 事实层
+  const facts = [
+    ['任务', '5<small>/ 7</small>', '来自我的计划'], ['逾期', '1', '来自我的计划'],
+    ['番茄', '6<small>个 · 150 分钟</small>', '来自番茄专注'], ['习惯', '2<small>/ 3</small>', '来自习惯'], ['支出', '¥86', '来自记账本'],
+  ];
+  $('facts').innerHTML = facts.map(([k, v, s]) => `<div class="fact"><div class="k">${k}</div><div class="v num">${v}</div><span class="src">${s}</span></div>`).join('');
+  const y = reviews[addDays(curDay, -1)];
+  $('promise').innerHTML = y && y.top1
+    ? `<span class="sub">昨天的承诺</span><b>「${esc(y.top1)}」</b>${y.top1Done ? '<span class="ok">✓ 已完成 14:32</span>' : '<span class="bad">✗ 未完成</span>'}<span class="sub" style="margin-left:auto">按任务状态自动判定</span>`
+    : `<span class="sub">昨天没有留下「明天最重要的一件事」</span>`;
+  // 表单
+  $('f-win').value = state.win; $('f-miss').value = state.miss; $('f-top1').value = state.top1; $('f-life').value = state.life;
+  $('causes').innerHTML = CAUSES.map(([k, l]) => `<button class="pill ${state.cause === k ? 'on' : ''}" onclick="state.cause=state.cause==='${k}'?'':'${k}';renderToday()">${l}</button>`).join('');
+  const scale = (id, key, lbls) => $(id).innerHTML = [1,2,3,4,5].map(n => `<button class="${state[key] === n ? 'on' : ''}" onclick="state.${key}=${n};renderToday()">${n}</button>`).join('') + `<span class="lbl">${state[key] ? lbls[state[key]-1] : '1 很差 · 5 很好'}</span>`;
+  scale('energy', 'energy', ['耗尽','偏低','一般','充沛','极佳']);
+  scale('mood', 'mood', ['很糟','低落','平静','不错','很好']);
+  // 股市
+  const due = theses.filter(t => t.verdict === 'pending' && t.due <= TODAY);
+  $('dueChip').textContent = due.length ? `待验证 ${due.length} 张` : '没有到期的观点卡';
+  $('dueChip').classList.toggle('hidden', !due.length);
+  const td = theses.filter(t => t.day === curDay);
+  $('todayTheses').innerHTML = td.length ? '今天记了：' + td.map(t => `<b>${esc(t.symbol)}</b> ${STANCE[t.stance]} · 信心 <span class="num">${t.conf}</span>`).join('，') : '今天还没有观点卡。没有想法就不记，不为了记而记。';
+  // 问题检查
+  const act = issues.filter(i => i.status === 'active');
+  $('issueCount').textContent = `进行中 ${act.length} 条`;
+  $('checks').innerHTML = act.length ? act.map(i => {
+    const v = state.checks[i.id];
+    const dots = last30.slice(-14).map((d, k) => { const c = i.checks[16 + k]; return `<i class="${c === 1 ? 'hit' : c === null ? 'na' : ''}"></i>`; }).join('');
+    return `<div class="issue-check ${v !== undefined ? 'done' : ''}">
+      <div class="t"><div>${esc(i.title)} <span class="tag">${DOMAIN[i.domain]}</span></div><div class="d">对策：${esc(i.cm)} · 近 14 天 <span class="dots">${dots}</span></div></div>
+      <div class="two"><button class="${v === 1 ? 'on-yes' : ''}" onclick="state.checks[${i.id}]=1;renderToday()">出现</button><button class="${v === 0 ? 'on-no' : ''}" onclick="state.checks[${i.id}]=0;renderToday()">没出现</button></div>
+    </div>`;
+  }).join('') : '<div class="empty">没有进行中的问题。从「没做好的一件」登记一条，或去问题库。</div>';
+  renderMirror();
+}
+function renderMirror() {
+  const box = $('mirrorBox');
+  const off = $('aiOff').checked;
+  if (!state.saved) { box.className = 'box muted'; box.innerHTML = `<div class="st">今日镜像</div>保存后生成。${off ? 'AI 未配置：复盘照常保存，这里会如实留空。' : ''}`; return; }
+  if (off) { box.className = 'box muted'; box.innerHTML = `<div class="st">今日镜像 · 未生成</div>AI 未配置。复盘已保存；去「设置」填写模型密钥后可生成。`; return; }
+  const hits = issues.filter(i => i.status === 'active' && state.checks[i.id] === 1);
+  const phone = issues.find(i => i.id === 1) || issues[0];
+  const n = phone.checks.filter(c => c === 1).length, m = phone.checks.filter(c => c !== null).length;
+  box.className = 'box';
+  box.innerHTML = `<div class="st">今日镜像 · 示例文字 · 只引用服务端数字</div>` + (hits.some(i => i.id === 1)
+    ? `「晚上刷手机到 1 点」近 30 天检查 ${m} 天、出现 ${n + 1} 天，今天精力你打了 ${state.energy || '—'} 分；这条问题登记 28 天了，对策没有改过。`
+    : hits.length ? `今天标记出现的 ${hits.length} 条问题里，「${esc(hits[0].title)}」的归因与你本周「没做好」的归因相同：${CAUSES.find(c => c[0] === state.cause)?.[1] || '未填归因'}。`
+    : `今天 ${issues.filter(i => i.status === 'active').length} 条问题都没出现，是近 30 天第 4 次全绿。昨天的承诺已完成，近 30 天承诺兑现 19/24。`);
+}
+function saveReview() {
+  const act = issues.filter(i => i.status === 'active');
+  const missing = act.filter(i => state.checks[i.id] === undefined);
+  if (missing.length) { toast(`还有 ${missing.length} 条问题没勾「出现 / 没出现」`); return; }
+  act.forEach(i => { if (curDay === TODAY) i.checks[29] = state.checks[i.id]; });
+  const first = !state.saved;
+  state.saved = true;
+  reviews[curDay] = { ...state };
+  if (first && curDay === TODAY) streak += 1;
+  reviewedDays.add(curDay);
+  renderToday();
+  toast(state.top1 && $('f-mktask').checked ? `已保存。「${state.top1}」已建成明天的任务` : '已保存');
+}
+['f-win','f-miss','f-top1','f-life'].forEach(id => $(id).addEventListener('input', e => state[id.slice(2) === 'top1' ? 'top1' : id.slice(2)] = e.target.value));
+function registerFromMiss() {
+  const t = $('f-miss').value.trim();
+  if (!t) { $('regHint').textContent = '先写下没做好的那件事'; return; }
+  if (issues.filter(i => i.status === 'active').length >= 7) { $('regHint').textContent = '进行中已有 7 条，先修正或归档一条'; return; }
+  issues.unshift({ id: Date.now(), title: t, domain: 'work', cm: '', status: 'active', opened: TODAY, relapse: 0, checks: Array(30).fill(null), cause: state.cause });
+  $('regHint').textContent = '已登记到问题库，记得补对策';
+  renderToday();
+}
+
+/* ───────── 问题库 ───────── */
+const streakClean = i => { let n = 0; for (let k = i.checks.length - 1; k >= 0; k--) { const c = i.checks[k]; if (c === null) continue; if (c === 1) break; n++; } return n; };
+function renderIssues() {
+  const act = issues.filter(i => i.status === 'active');
+  $('capHint').textContent = `进行中 ${act.length} / 7`;
+  const grp = [['进行中 · 每日检查', 'active'], ['观察中 · 30 天内出现即打回', 'observing'], ['已修正', 'resolved']];
+  $('issueList').innerHTML = grp.map(([t, s]) => {
+    const list = issues.filter(i => i.status === s);
+    return `<div class="sec-title">${t} · ${list.length}</div>` + (list.length ? list.map(issueCard).join('') : '<div class="empty">暂无</div>');
+  }).join('');
+}
+function issueCard(i) {
+  const hit = i.checks.filter(c => c === 1).length, chk = i.checks.filter(c => c !== null).length, clean = streakClean(i);
+  // 真实「连续未出现」应跨越 30 天窗口由服务端算；示例里观察/已修正条目直接给定。
+  const cleanDays = i.status === 'active' ? clean : (i.status === 'observing' ? 27 : 37);
+  const eligible = i.status === 'active' && cleanDays >= 21;
+  const grid = i.checks.map((c, k) => `<i class="${c === 1 ? 'hit' : c === null ? 'na' : ''} ${last30[k] === TODAY ? 'today' : ''}" title="${cn(last30[k])} · ${c === 1 ? '出现' : c === null ? '未复盘' : '没出现'}"></i>`).join('');
+  const acts = i.status === 'active' ? `
+      <div class="row"><button class="ghost small" onclick="toast('对策已建成明天的任务（origin=review，幂等）')" ${i.cm ? '' : 'disabled'}>对策 → 任务</button><button class="ghost small" onclick="toast('已创建为每周习惯')" ${i.cm ? '' : 'disabled'}>对策 → 习惯</button></div>
+      <div class="row"><button class="primary small" ${eligible ? '' : 'disabled'} onclick="resolveIssue(${i.id})">标记已修正</button><button class="ghost small" onclick="archiveIssue(${i.id})">归档</button></div>
+      <div class="why">${eligible ? '连续 21 天未出现，可标记' : `还差 ${21 - cleanDays} 天（连续未出现 ${cleanDays} 天）`}</div>`
+    : i.status === 'observing' ? `<div class="row"><button class="ghost small" onclick="relapse(${i.id})">模拟：今天出现了</button></div><div class="why">观察期剩 ${30 - 6} 天</div>`
+    : `<div class="why">${i.resolved} 修正 · 历史重开 ${i.relapse} 次</div>`;
+  return `<div class="issue">
+    <div>
+      <div class="head"><b>${esc(i.title)}</b><span class="tag">${DOMAIN[i.domain]}</span>${i.relapse ? `<span class="chip neg">重开 ${i.relapse} 次</span>` : ''}${i.status === 'observing' ? '<span class="chip warn">观察中</span>' : ''}</div>
+      <div class="cm">对策：${i.cm ? `<em>${esc(i.cm)}</em>` : '<span style="color:var(--warn)">还没有对策</span>'} <button class="link" onclick="editCm(${i.id})">编辑</button></div>
+      <div class="grid30">${grid}</div>
+      <div class="metrics"><span>登记 <b>${i.opened.slice(5).replace('-', '/')}</b></span><span>近 30 天检查 <b class="num">${chk}</b> 天 · 出现 <b class="num">${hit}</b> 天</span><span>复发率 <b class="num">${chk ? Math.round(hit / chk * 100) : '—'}%</b></span><span>连续未出现 <b class="num">${cleanDays}</b> 天</span></div>
+    </div>
+    <div class="acts">${acts}</div>
+  </div>`;
+}
+function editCm(id) { const i = issues.find(x => x.id === id); const v = prompt('对策（写成一个明天就能做的动作）', i.cm); if (v !== null) { i.cm = v.trim(); renderIssues(); } }
+function addIssue() {
+  const t = $('newIssue').value.trim(); if (!t) return;
+  if (issues.filter(i => i.status === 'active').length >= 7) { toast('进行中已有 7 条，先修正或归档一条'); return; }
+  issues.unshift({ id: Date.now(), title: t, domain: $('newDomain').value, cm: '', status: 'active', opened: TODAY, relapse: 0, checks: Array(30).fill(null) });
+  $('newIssue').value = ''; renderIssues();
+}
+function resolveIssue(id) { const i = issues.find(x => x.id === id); i.status = 'observing'; i.resolved = TODAY; renderIssues(); toast('已进入 30 天观察期，期间出现会自动打回'); }
+function relapse(id) { const i = issues.find(x => x.id === id); i.status = 'active'; i.relapse += 1; i.resolved = null; i.checks[29] = 1; renderIssues(); toast('观察期内出现，已重开并计次'); }
+function archiveIssue(id) {
+  const idx = issues.findIndex(x => x.id === id); const [it] = issues.splice(idx, 1); renderIssues();
+  toast(`已归档「${it.title}」`, () => { issues.splice(idx, 0, it); renderIssues(); });
+}
+
+/* ───────── 股市观点 ───────── */
+function thesisCard(t, withVerify) {
+  const issueOpts = issues.filter(i => i.status === 'active').map(i => `<option value="${i.id}">${esc(i.title)}</option>`).join('');
+  const d = verifyDraft[t.id] || {};
+  const q = withVerify ? `<div class="verify">
+      <div class="q"><span class="ql">① 当初的理由，现在看成立吗？</span><div class="two"><button class="${d.p === 1 ? 'on-no' : ''}" onclick="vd(${t.id},'p',1)">成立</button><button class="${d.p === 0 ? 'on-yes' : ''}" onclick="vd(${t.id},'p',0)">不成立</button></div></div>
+      <div class="q"><span class="ql">② 按当时方向与时间窗，结果如何？</span><div class="two"><button class="${d.o === 1 ? 'on-no' : ''}" onclick="vd(${t.id},'o',1)">符合预期</button><button class="${d.o === 0 ? 'on-yes' : ''}" onclick="vd(${t.id},'o',0)">不符合</button><button class="${d.o === -1 ? 'on-yes' : ''}" onclick="vd(${t.id},'o',-1)">无法判断</button></div></div>
+      <div class="q"><span class="ql">③ 勾连到一条问题（可选）</span><select onchange="vd(${t.id},'issue',this.value)" style="border:1px solid var(--line);border-radius:8px;padding:6px 10px;background:#fff;max-width:280px"><option value="">不勾连</option>${issueOpts}</select></div>
+      <div class="q"><span class="ql">备注（可空）</span><input type="text" placeholder="一句话" oninput="vd(${t.id},'note',this.value)" style="border:1px solid var(--line);border-radius:8px;padding:6px 10px;outline:0"></div>
+      <div style="display:flex;justify-content:flex-end;gap:8px"><span class="sub" style="align-self:center">验证一次性生效，之后不能改口</span><button class="primary small" ${d.p === undefined || d.o === undefined ? 'disabled' : ''} onclick="doVerify(${t.id})">提交验证</button></div>
+    </div>` : '';
+  const verdict = t.verdict === 'verified' ? `<span class="chip ${t.p === 0 && t.o === 1 ? 'warn' : ''}">${quad(t.p, t.o)}</span>` : t.verdict === 'unclear' ? '<span class="chip">无法判断</span>' : `<span class="chip ${t.due <= TODAY ? 'warn' : ''}">${t.due <= TODAY ? '已到期' : '到期 ' + t.due.slice(5).replace('-', '/')}</span>`;
+  return `<div class="thesis ${withVerify ? 'locked' : ''}">
+    <div class="top"><b>${esc(t.symbol)}</b><span class="chip accent">${STANCE[t.stance]}</span>${verdict}<span class="sub" style="margin-left:auto">${t.day.slice(5).replace('-', '/')} 记</span></div>
+    <div class="reason">${esc(t.thesis)}</div>
+    <div class="meta"><span>信心 <b class="num">${t.conf}</b></span><span>时间窗 <b class="num">${t.h}</b> 个交易日</span><span>实操 ${ACT[t.act]}</span><span>当时情绪 ${EMO[t.emo]}</span>${t.price ? `<span>参考价 ${esc(t.price)}</span>` : ''}${t.note ? `<span>· ${esc(t.note)}</span>` : ''}${t.issueId ? `<span>· 勾连「${esc(issues.find(i => i.id === t.issueId)?.title || '')}」</span>` : ''}</div>
+    ${q}</div>`;
+}
+const quad = (p, o) => p && o ? '逻辑对 · 结果对' : !p && o ? '逻辑错 · 结果对（运气）' : p && !o ? '逻辑对 · 结果错' : '逻辑错 · 结果错';
+function vd(id, k, v) { verifyDraft[id] = { ...(verifyDraft[id] || {}), [k]: v }; renderMarket(); }
+function doVerify(id) {
+  const t = theses.find(x => x.id === id), d = verifyDraft[id];
+  t.p = d.p; t.note = d.note || ''; t.verdict = d.o === -1 ? 'unclear' : 'verified'; t.o = d.o === -1 ? null : d.o;
+  if (d.issue) { t.issueId = +d.issue; const i = issues.find(x => x.id === +d.issue); if (i) i.checks[29] = 1; }
+  delete verifyDraft[id]; renderMarket(); toast('已验证并锁定');
+}
+function renderMarket() {
+  const pend = theses.filter(t => t.verdict === 'pending').sort((a, b) => a.due.localeCompare(b.due));
+  $('pending').innerHTML = pend.length ? pend.map(t => thesisCard(t, t.due <= TODAY)).join('') : '<div class="empty">没有待验证的观点卡</div>';
+  const ver = theses.filter(t => t.verdict === 'verified');
+  $('vcount').textContent = ver.length;
+  const c = (p, o) => ver.filter(t => t.p === p && t.o === o).length;
+  $('matrix').innerHTML = `<div></div><div class="h">结果符合</div><div class="h">结果不符</div>
+    <div class="h">理由成立</div>
+    <div class="cell" title="可复制的决策"><div class="n num">${c(1,1)}</div><div class="l">逻辑对 · 结果对</div><div class="s">可复制</div></div>
+    <div class="cell"><div class="n num">${c(1,0)}</div><div class="l">逻辑对 · 结果错</div><div class="s">接受，不改逻辑</div></div>
+    <div class="h">理由不成立</div>
+    <div class="cell danger"><div class="n num">${c(0,1)}</div><div class="l">逻辑错 · 结果对</div><div class="s">运气，最危险</div></div>
+    <div class="cell"><div class="n num">${c(0,0)}</div><div class="l">逻辑错 · 结果错</div><div class="s">改逻辑</div></div>`;
+  // 校准
+  if (ver.length < 20) $('calib').innerHTML = `<div class="insuff"><b>样本不足</b>已验证 ${ver.length} 张，还差 ${20 - ver.length} 张才画校准曲线。<br>少于 20 张的「命中率」只是噪音，不显示。</div>`;
+  else $('calib').innerHTML = '<div class="sub">（示例未覆盖 ≥20 张的情形）</div>';
+  // 情绪
+  const emos = Object.keys(EMO).map(e => { const l = ver.filter(t => t.emo === e); return [e, l.length, l.filter(t => t.o === 1).length]; }).filter(r => r[1]);
+  $('emoTable').innerHTML = `<tr><th>情绪</th><th>张数</th><th>结果符合</th><th style="width:40%">符合率</th></tr>` + emos.map(([e, n, k]) => `<tr><td>${EMO[e]}</td><td class="num">${n}</td><td class="num">${k}</td><td><div style="display:flex;gap:8px;align-items:center;justify-content:flex-end"><div class="bar" style="width:70%"><i style="width:${k / n * 100}%"></i></div><span class="num" style="width:34px;text-align:right">${Math.round(k / n * 100)}%</span></div></td></tr>`).join('');
+  $('verified').innerHTML = theses.filter(t => t.verdict !== 'pending').sort((a, b) => b.day.localeCompare(a.day)).map(t => thesisCard(t, false)).join('');
+}
+function addThesis() {
+  const s = $('t-symbol').value.trim(), th = $('t-thesis').value.trim();
+  if (!s || !th) { toast('标的和理由必填'); return; }
+  if (th.length > 140) { toast('理由超过 140 字'); return; }
+  const h = +$('t-h').value;
+  theses.push({ id: Date.now(), day: TODAY, symbol: s, stance: $('t-stance').value, thesis: th, conf: +$('t-conf').value, h, act: $('t-act').value, emo: $('t-emo').value, price: $('t-price').value.trim(), verdict: 'pending', due: addDays(TODAY, h * 7 / 5 | 0) });
+  $('t-symbol').value = ''; $('t-thesis').value = ''; $('t-price').value = '';
+  renderMarket(); toast(`已记录，${addDays(TODAY, h * 7 / 5 | 0).slice(5).replace('-', '/')} 到期验证。理由已锁定。`);
+}
+
+/* ───────── 周回看 ───────── */
+function spark(id, vals) {
+  const W = 560, H = 110, pad = 14, n = vals.length;
+  const x = i => pad + i * (W - 2 * pad) / (n - 1), y = v => H - pad - (v - 1) / 4 * (H - 2 * pad);
+  const pts = vals.map((v, i) => v == null ? null : [x(i), y(v)]).filter(Boolean);
+  const path = pts.map((p, i) => (i ? 'L' : 'M') + p[0] + ',' + p[1]).join(' ');
+  const area = pts.length ? `M${pts[0][0]},${H - pad} ` + pts.map(p => `L${p[0]},${p[1]}`).join(' ') + ` L${pts[pts.length - 1][0]},${H - pad} Z` : '';
+  const grid = [1, 3, 5].map(v => `<line class="grid" x1="${pad}" x2="${W - pad}" y1="${y(v)}" y2="${y(v)}"/><text class="lbl" x="0" y="${y(v) + 3}">${v}</text>`).join('');
+  const dots = vals.map((v, i) => v == null ? `<text class="lbl" x="${x(i)}" y="${H - 2}" text-anchor="middle">未复盘</text>` : `<circle class="pt" cx="${x(i)}" cy="${y(v)}"><title>周${'一二三四五六日'[i]} · ${v}</title></circle>`).join('');
+  $(id).setAttribute('viewBox', `0 0 ${W} ${H}`);
+  $(id).innerHTML = grid + `<path class="area" d="${area}"/><path class="ln" d="${path}"/>` + dots;
+}
+function renderWeek() {
+  const tiles = [['复盘出勤', '6<small>/ 7 天</small>', '周四没复盘'], ['承诺兑现', '4<small>/ 6</small>', '「明天最重要的一件事」完成数'], ['任务完成率', '71<small>%</small>', '27 / 38，来自计划'], ['番茄', '23<small>个</small>', '9.6 小时'], ['观点卡', '2<small>张 · 验证 1</small>', '1 张逻辑对结果错']];
+  $('wtiles').innerHTML = tiles.map(([k, v, d]) => `<div class="tile"><div class="k">${k}</div><div class="v num">${v}</div><div class="d">${d}</div></div>`).join('');
+  spark('sp-energy', [3, 4, 2, null, 4, 3, 3]);
+  spark('sp-mood', [3, 3, 2, null, 4, 4, 3]);
+  const wi = [['晚上刷手机到 1 点', 3], ['会前不看材料', 2], ['追高买入', 1], ['午饭后不散步直接坐下（观察中）', 0]];
+  $('wissues').innerHTML = `<tr><th>问题</th><th style="width:45%">出现 / 检查 6 天</th></tr>` + wi.map(([t, n]) => `<tr><td>${t}</td><td><div style="display:flex;gap:8px;align-items:center;justify-content:flex-end"><div class="bar" style="width:70%"><i style="width:${n / 6 * 100}%"></i></div><span class="num" style="width:20px;text-align:right">${n}</span></div></td></tr>`).join('');
+  const wc = [['被打断', 3], ['计划过满', 2], ['拖延/启动难', 1]];
+  $('wcauses').innerHTML = `<tr><th>归因</th><th>次数</th></tr>` + wc.map(([t, n]) => `<tr><td>${t}</td><td class="num">${n}</td></tr>`).join('');
+  const off = $('aiOffW').checked, box = $('weekAI');
+  box.className = 'box' + (off ? ' muted' : '');
+  box.innerHTML = off ? `<div class="st">未生成</div>AI 未配置。上面的数字照常；这段文字不会用模板伪造。`
+    : `<div class="st">示例文字 · schema v1</div>最该改的是「晚上刷手机到 1 点」：本周检查 6 天出现 3 天，是三条进行中问题里最高的；它出现的三天（周一、周三、周六）精力分别是 3、2、3，周三是本周最低。这条问题登记 28 天、重开过 1 次，对策「23:30 手机放客厅充电」从未改过——先改对策，再谈坚持。工作归因里「被打断」3 次居首，与「会前不看材料」出现的 2 天重合 1 天。`;
+}
+
+/* ───────── toast ───────── */
+let toastTimer, undoFn;
+function toast(msg, undo) {
+  $('toastMsg').textContent = msg; undoFn = undo; $('toastUndo').classList.toggle('hidden', !undo);
+  $('toast').classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').classList.remove('show'), 4200);
+}
+$('toastUndo').onclick = () => { undoFn && undoFn(); $('toast').classList.remove('show'); };
+
+renderToday();
+</script>
+</body>
+</html>
