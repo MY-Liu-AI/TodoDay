@@ -35,6 +35,8 @@ import {
   loadGoals,
   restoreDeletedTx,
   dismissDeletedTx,
+  loadAssistantConfig,
+  loadMailConfig,
 } from "./store";
 import type { Item } from "./store";
 import type { WireGoalTask } from "./api";
@@ -69,6 +71,34 @@ function openSettings(which: "bot" | "llm" | "mail") {
   else if (which === "llm") settingsRef.value?.openLlm();
   else settingsRef.value?.openMail();
 }
+/* 菜单里的三件套状态徽标：打开菜单时顺手刷新一次配置视图（后端 running
+   是内嵌连接的真值，随取随新，不需要轮询）。 */
+watch(menuOpen, (open) => {
+  if (open) {
+    void loadAssistantConfig();
+    void loadMailConfig();
+  }
+});
+type MenuStatus = { state: "running" | "stopped" | "error" | "none" | "ready"; label: string };
+const botStatus = computed<MenuStatus>(() => {
+  const v = st.assistant;
+  if (!v || !v.botId || !v.botSecretSet) return { state: "none", label: C.assistantNotConfigured };
+  if (v.running) return { state: "running", label: C.assistantRunning };
+  if (v.enabled) return { state: "error", label: C.statusError };
+  return { state: "stopped", label: C.assistantStopped };
+});
+const llmStatus = computed<MenuStatus>(() => {
+  const v = st.assistant;
+  if (!v || !v.kimiApiKeySet) return { state: "none", label: C.assistantNotConfigured };
+  return { state: "ready", label: C.statusConfigured };
+});
+const mailStatus = computed<MenuStatus>(() => {
+  const v = st.mail;
+  if (!v || !v.configured || !v.authCodeSet) return { state: "none", label: C.assistantNotConfigured };
+  if (v.running) return { state: "running", label: C.assistantRunning };
+  if (v.enabled || v.lastRunOk === false) return { state: "error", label: C.statusError };
+  return { state: "stopped", label: C.assistantStopped };
+});
 const filter = ref("all");
 const month = ref(new Date(new Date(TODAY).getFullYear(), new Date(TODAY).getMonth(), 1));
 const daySel = ref(0);
@@ -365,14 +395,17 @@ watch(
             <button role="menuitem" @click="openSettings('bot')">
               <Icon name="robot" />
               {{ C.assistantTitle }}
+              <span class="menu-status" :data-state="botStatus.state"><i class="dot" />{{ botStatus.label }}</span>
             </button>
             <button role="menuitem" @click="openSettings('llm')">
               <Icon name="ai" />
               {{ C.assistantAiTitle }}
+              <span class="menu-status" :data-state="llmStatus.state"><i class="dot" />{{ llmStatus.label }}</span>
             </button>
             <button role="menuitem" @click="openSettings('mail')">
               <Icon name="mail" />
               {{ C.mailTitle }}
+              <span class="menu-status" :data-state="mailStatus.state"><i class="dot" />{{ mailStatus.label }}</span>
             </button>
             <button role="menuitem" @click="setTheme(theme === 'light' ? 'dark' : 'light')">
               <Icon :name="theme === 'light' ? 'moon' : 'sun'" />
@@ -393,14 +426,17 @@ watch(
             <button role="menuitem" @click="openSettings('bot')">
               <Icon name="robot" />
               {{ C.assistantTitle }}
+              <span class="menu-status" :data-state="botStatus.state"><i class="dot" />{{ botStatus.label }}</span>
             </button>
             <button role="menuitem" @click="openSettings('llm')">
               <Icon name="ai" />
               {{ C.assistantAiTitle }}
+              <span class="menu-status" :data-state="llmStatus.state"><i class="dot" />{{ llmStatus.label }}</span>
             </button>
             <button role="menuitem" @click="openSettings('mail')">
               <Icon name="mail" />
               {{ C.mailTitle }}
+              <span class="menu-status" :data-state="mailStatus.state"><i class="dot" />{{ mailStatus.label }}</span>
             </button>
             <button role="menuitem" @click="setTheme(theme === 'light' ? 'dark' : 'light')">
               <Icon :name="theme === 'light' ? 'moon' : 'sun'" />

@@ -202,6 +202,10 @@ export const C = {
   assistantRunning: "运行中",
   assistantStopped: "已停止",
   assistantNotConfigured: "未配置",
+  // 设置菜单里三件套的状态徽标：异常 = 该跑而没在跑/上轮失败；已配置
+  // 只用于 LLM 这类纯配置项（没有运行时概念，如实显示）。
+  statusError: "异常",
+  statusConfigured: "已配置",
   assistantTest: "测试连接",
   assistantTesting: "测试中…",
   assistantTestOk: "测试通过：机器人凭据有效。",

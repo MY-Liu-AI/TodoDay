@@ -249,7 +249,7 @@ button:disabled {
   left: 0;
   bottom: calc(100% + 8px);
   z-index: 41;
-  min-width: 180px;
+  min-width: 210px;
   display: flex;
   flex-direction: column;
   padding: 4px;
@@ -273,6 +273,31 @@ button:disabled {
 }
 .settings-popup button:hover {
   background: var(--raised);
+}
+/* 设置菜单里的集成状态徽标：靠右对齐，圆点颜色即状态。running/ready 用
+   正向色，error 用负向色，stopped/none 用 muted——和账本正负色的既有
+   语义一致。 */
+.menu-status {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.menu-status .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.menu-status[data-state="running"],
+.menu-status[data-state="ready"] {
+  color: var(--pos);
+}
+.menu-status[data-state="error"] {
+  color: var(--neg);
 }
 /* 桌面端隐藏导航行里的设置入口——它属于左下角菜单 */
 .nav-settings {
